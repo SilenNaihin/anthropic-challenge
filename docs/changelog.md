@@ -14,6 +14,25 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Pipeline v_node_a loads during hash cycles 8-11
+
+**Hypothesis**: LOAD engine is free during hash cycles 8-15. Can move v_node_a scattered loads into cycles 8-11 (4 cycles × 2 loads = 8 loads), saving 4 cycles from finish phase.
+
+**Change**: Added scattered loads for v_node_a[0:8] during hash cycles 8-11. Updated emit_finish_with_loads to only load v_node_b.
+
+**Result**: 5,457 → 4,947 cycles (29.86x speedup)
+
+**Analysis**:
+- Saved 510 cycles (~2 cycles per iteration × 256 iterations)
+- v_node_a loaded during hash, v_node_b loaded during finish
+- Failed attempt: Adding v_node_b loads to hash cycles 12-15 caused correctness failure
+  - addr_b[4:8] computed in cycle 6, should be ready by cycle 12
+  - Root cause still unclear - possibly a timing issue with the store phase
+
+**Verdict**: Keep - incremental improvement.
+
+---
+
 ## [2025-01-22] - Overlap scattered loads with finish operations
 
 **Hypothesis**: During emit_finish (6 cycles), LOAD engine is completely free. Can do 12 of 16 scattered loads in parallel, leaving only 4 for afterward.

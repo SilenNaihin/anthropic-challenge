@@ -323,27 +323,30 @@ class KernelBuilder:
                 ]})
 
         def emit_finish_with_loads(r, r_nxt, has_next):
-            """Emit index computation, bounds check, and stores, overlapping scattered loads for next."""
-            # Cycle 1: VALU (4 slots) + LOAD (2 slots)
+            """Emit index computation, bounds check, and stores, overlapping scattered loads for next.
+
+            Note: v_node_a is loaded during hash cycles 8-11. Only v_node_b loads here.
+            """
+            # Cycle 1: VALU (4 slots) + LOAD (2 slots for v_node_b)
             instr1 = {"valu": [
                 ("&", r['v_htmp1_a'], r['v_val_a'], v_one), ("&", r['v_htmp1_b'], r['v_val_b'], v_one),
                 ("multiply_add", r['v_idx_a'], r['v_idx_a'], v_two, v_one),
                 ("multiply_add", r['v_idx_b'], r['v_idx_b'], v_two, v_one),
             ]}
             if has_next:
-                instr1["load"] = [("load", r_nxt['v_node_a'], r_nxt['addr_a'][0]), ("load", r_nxt['v_node_a'] + 1, r_nxt['addr_a'][1])]
+                instr1["load"] = [("load", r_nxt['v_node_b'], r_nxt['addr_b'][0]), ("load", r_nxt['v_node_b'] + 1, r_nxt['addr_b'][1])]
             self.instrs.append(instr1)
 
             # Cycle 2: VALU (2 slots) + LOAD (2 slots)
             instr2 = {"valu": [("+", r['v_idx_a'], r['v_idx_a'], r['v_htmp1_a']), ("+", r['v_idx_b'], r['v_idx_b'], r['v_htmp1_b'])]}
             if has_next:
-                instr2["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['addr_a'][2]), ("load", r_nxt['v_node_a'] + 3, r_nxt['addr_a'][3])]
+                instr2["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['addr_b'][2]), ("load", r_nxt['v_node_b'] + 3, r_nxt['addr_b'][3])]
             self.instrs.append(instr2)
 
             # Cycle 3: VALU (2 slots) + LOAD (2 slots)
             instr3 = {"valu": [("<", r['v_htmp1_a'], r['v_idx_a'], v_n_nodes), ("<", r['v_htmp1_b'], r['v_idx_b'], v_n_nodes)]}
             if has_next:
-                instr3["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['addr_a'][4]), ("load", r_nxt['v_node_a'] + 5, r_nxt['addr_a'][5])]
+                instr3["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['addr_b'][4]), ("load", r_nxt['v_node_b'] + 5, r_nxt['addr_b'][5])]
             self.instrs.append(instr3)
 
             # Cycle 4: FLOW (1 slot) + STORE (2 slots) + LOAD (2 slots)
@@ -352,23 +355,17 @@ class KernelBuilder:
                 "store": [("vstore", r['val_base_a'], r['v_val_a']), ("vstore", r['val_base_b'], r['v_val_b'])],
             }
             if has_next:
-                instr4["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['addr_a'][6]), ("load", r_nxt['v_node_a'] + 7, r_nxt['addr_a'][7])]
+                instr4["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['addr_b'][6]), ("load", r_nxt['v_node_b'] + 7, r_nxt['addr_b'][7])]
             self.instrs.append(instr4)
 
-            # Cycle 5: FLOW (1 slot) + STORE (1 slot) + LOAD (2 slots)
-            instr5 = {
+            # Cycle 5: FLOW (1 slot) + STORE (1 slot)
+            self.instrs.append({
                 "flow": [("vselect", r['v_idx_b'], r['v_htmp1_b'], r['v_idx_b'], v_zero)],
                 "store": [("vstore", r['idx_base_a'], r['v_idx_a'])],
-            }
-            if has_next:
-                instr5["load"] = [("load", r_nxt['v_node_b'], r_nxt['addr_b'][0]), ("load", r_nxt['v_node_b'] + 1, r_nxt['addr_b'][1])]
-            self.instrs.append(instr5)
+            })
 
-            # Cycle 6: STORE (1 slot) + LOAD (2 slots)
-            instr6 = {"store": [("vstore", r['idx_base_b'], r['v_idx_b'])]}
-            if has_next:
-                instr6["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['addr_b'][2]), ("load", r_nxt['v_node_b'] + 3, r_nxt['addr_b'][3])]
-            self.instrs.append(instr6)
+            # Cycle 6: STORE (1 slot)
+            self.instrs.append({"store": [("vstore", r['idx_base_b'], r['v_idx_b'])]})
 
         def emit_xor(r):
             """Emit XOR for a batch after scattered loads complete."""
@@ -420,6 +417,14 @@ class KernelBuilder:
                 elif cycle_num == 6:
                     # Cycle 6: extract part 2 (ALU - 4 ops)
                     instr_a["alu"] = [("+", r_nxt['addr_b'][i], r_nxt['v_taddr_b'] + i, zero_const) for i in range(4, VLEN)]
+                elif cycle_num == 8:
+                    # Scattered loads during hash: v_node_a[0:4]
+                    instr_a["load"] = [("load", r_nxt['v_node_a'], r_nxt['addr_a'][0]), ("load", r_nxt['v_node_a'] + 1, r_nxt['addr_a'][1])]
+                    instr_b["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['addr_a'][2]), ("load", r_nxt['v_node_a'] + 3, r_nxt['addr_a'][3])]
+                elif cycle_num == 10:
+                    # Scattered loads: v_node_a[4:8]
+                    instr_a["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['addr_a'][4]), ("load", r_nxt['v_node_a'] + 5, r_nxt['addr_a'][5])]
+                    instr_b["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['addr_a'][6]), ("load", r_nxt['v_node_a'] + 7, r_nxt['addr_a'][7])]
 
                 self.instrs.append(instr_a)
                 self.instrs.append(instr_b)
@@ -444,13 +449,11 @@ class KernelBuilder:
                 # Last iteration: just hash
                 emit_hash_only(r_cur)
 
-            # Finish current batch (overlaps 12 scattered loads for next)
+            # Finish current batch (v_node_a loaded during hash, v_node_b during finish)
             emit_finish_with_loads(r_cur, r_nxt, has_next)
 
+            # XOR for next batch (all scattered loads complete)
             if has_next:
-                # Remaining scattered loads: only addr_b[4:8] (4 loads = 2 cycles)
-                self.instrs.append({"load": [("load", r_nxt['v_node_b'] + 4, r_nxt['addr_b'][4]), ("load", r_nxt['v_node_b'] + 5, r_nxt['addr_b'][5])]})
-                self.instrs.append({"load": [("load", r_nxt['v_node_b'] + 6, r_nxt['addr_b'][6]), ("load", r_nxt['v_node_b'] + 7, r_nxt['addr_b'][7])]})
                 emit_xor(r_nxt)
 
         self.instrs.append({"flow": [("pause",)]})
