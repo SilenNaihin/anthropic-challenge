@@ -13,6 +13,7 @@ Reference documentation for all analysis and optimization tools.
 | [Cycle Profiler](#cycle-profiler) | **Completed** | `tools/cycle_profiler/` | P1 |
 | [Memory Analyzer](#memory-analyzer) | **Completed** | `tools/memory_analyzer/` | P1 |
 | [Constraint Validator](#constraint-validator) | **Completed** | `tools/constraint_validator/` | P2 |
+| [Kernel Diff](#kernel-diff) | **Completed** | `tools/kernel_diff/` | P2 |
 
 See `tools/prd.json` for full tracking.
 
@@ -302,6 +303,60 @@ python tools/constraint_validator/constraint_validator.py --strict
 ### Documentation
 - Full docs: `tools/constraint_validator/README.md`
 - Quick ref: `tools/constraint_validator/quickstart.md`
+
+---
+
+## Kernel Diff
+
+**Status**: Completed | **Folder**: `tools/kernel_diff/`
+
+Compare two kernel versions to track optimization impact. Essential for understanding what changed between optimization iterations.
+
+### Quick Usage
+```bash
+# Compare two kernels
+python tools/kernel_diff/kernel_diff.py kernel1.json kernel2.json
+
+# Compare current vs baseline
+python tools/kernel_diff/kernel_diff.py --baseline baseline.json
+
+# Save current kernel
+python tools/kernel_diff/kernel_diff.py --save current.json
+```
+
+### Features
+- Cycle comparison (before/after cycles, speedup)
+- Utilization diff (slot usage changes per engine)
+- Instruction diff (operations added, removed, modified)
+- Side-by-side comparison view
+- Rich colored output
+- JSON output for scripting
+- Baseline comparison mode
+
+### Key Output
+```
+SUMMARY: IMPROVEMENT: 1.45x faster (-310 cycles)
+
+CYCLE COMPARISON
+  Before:  1000 cycles
+  After:   690 cycles
+  Speedup: 1.45x FASTER
+
+PER-ENGINE CHANGES
+Engine        Before       After       Delta   Util Delta
+alu            1,234       1,456        +222       +2.3%
+valu             567         890        +323      +12.5%
+```
+
+### Workflow
+1. Save baseline: `python tools/kernel_diff/kernel_diff.py --save v1.json`
+2. Make optimization changes
+3. Compare: `python tools/kernel_diff/kernel_diff.py --baseline v1.json`
+4. If improvement, save new version
+
+### Documentation
+- Full docs: `tools/kernel_diff/README.md`
+- Quick ref: `tools/kernel_diff/quickstart.md`
 
 ---
 

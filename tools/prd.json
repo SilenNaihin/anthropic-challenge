@@ -170,15 +170,21 @@
     {
       "id": "kernel_diff",
       "name": "Kernel Diff Tool",
-      "file": "kernel_diff.py",
-      "status": "not_started",
+      "file": "kernel_diff/kernel_diff.py",
+      "status": "completed",
       "priority": "P2",
       "description": "Compare two kernel versions (cycles, utilization, structure)",
       "features": {
-        "cycle_comparison": false,
-        "utilization_diff": false,
-        "instruction_diff": false
+        "cycle_comparison": true,
+        "utilization_diff": true,
+        "instruction_diff": true,
+        "side_by_side_view": true,
+        "rich_output": true,
+        "json_output": true,
+        "baseline_comparison": true,
+        "save_kernel": true
       },
+      "usage": "python tools/kernel_diff/kernel_diff.py kernel1.json kernel2.json [--baseline FILE] [--save FILE] [--json] [-v]",
       "value": "Track impact of each optimization"
     },
     {
