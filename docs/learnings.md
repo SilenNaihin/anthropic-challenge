@@ -44,8 +44,14 @@ Document insights, gotchas, and what worked vs didn't.
 
 ## What Works
 
-<!-- Add successful techniques here -->
+- **Vectorization**: VLEN=8 gives ~8x theoretical speedup
+- **Dual-batch processing**: Processing 2 batches in parallel uses more valu slots
+- **Multi-engine packing**: Combine flow+store, valu+alu in same cycle
+- **Arithmetic instead of select**: `2*idx + (1 if even else 2)` → `2*idx + 1 + (val&1)`
+- **Pre-computing constants**: Hash constant vectors outside loop saves broadcasts
 
 ## What Doesn't Work
 
-<!-- Add failed approaches here to avoid repeating -->
+- **Packing ops that share write/read in same cycle**: Reads see old values, writes happen at end
+- **Triple batch hash**: 32 batches / 3 doesn't divide evenly, complex remainder handling
+- **Overlapping scattered loads with valu**: Everything depends on loaded data
