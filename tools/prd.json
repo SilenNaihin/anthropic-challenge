@@ -36,7 +36,7 @@
     {
       "id": "dependency_graph",
       "name": "Dependency Graph Builder",
-      "file": "dependency_graph.py",
+      "file": "dependency_graph/dependency_graph.py",
       "status": "completed",
       "priority": "P0",
       "description": "Build full DAG of instruction dependencies (RAW, WAR, WAW hazards)",
@@ -48,7 +48,7 @@
         "rich_output": true,
         "json_output": true
       },
-      "usage": "python tools/dependency_graph.py [--json] [--top N]",
+      "usage": "python tools/dependency_graph/dependency_graph.py [--json] [--top N]",
       "value": "Essential for understanding what PREVENTS packing"
     },
     {

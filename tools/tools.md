@@ -8,7 +8,7 @@ Reference documentation for all analysis and optimization tools.
 |------|--------|----------|----------|
 | [Slot Analyzer](#slot-analyzer) | **Completed** | `tools/slot_analyzer.py` | P0 |
 | [VLIW Auto-Packer](#vliw-auto-packer) | **Completed** | `tools/vliw_packer/` | P0 |
-| [Dependency Graph](#dependency-graph) | **Completed** | `tools/dependency_graph.py` | P0 |
+| [Dependency Graph](#dependency-graph) | **Completed** | `tools/dependency_graph/` | P0 |
 | [Hash Pipeline](#hash-pipeline) | **Completed** | `tools/hash_pipeline/` | P1 |
 | Cycle Profiler | Not Started | - | P1 |
 | Memory Analyzer | Not Started | - | P1 |
@@ -70,14 +70,14 @@ python tools/vliw_packer/vliw_packer.py --output packed.json
 
 ## Dependency Graph
 
-**Status**: Completed | **File**: `tools/dependency_graph.py`
+**Status**: Completed | **Folder**: `tools/dependency_graph/`
 
 Builds full dependency DAG for accurate critical path analysis.
 
 ### Quick Usage
 ```bash
-python tools/dependency_graph.py
-python tools/dependency_graph.py --json
+python tools/dependency_graph/dependency_graph.py
+python tools/dependency_graph/dependency_graph.py --json
 ```
 
 ### Features
