@@ -2,16 +2,16 @@
 
 ```bash
 # Basic analysis
-python tools/dependency_graph.py
+python tools/dependency_graph/dependency_graph.py
 
 # JSON output
-python tools/dependency_graph.py --json
+python tools/dependency_graph/dependency_graph.py --json
 
 # Export DOT visualization
-python tools/dependency_graph.py --dot graph.dot
+python tools/dependency_graph/dependency_graph.py --dot graph.dot
 
 # Show more hot registers
-python tools/dependency_graph.py --top 20
+python tools/dependency_graph/dependency_graph.py --top 20
 ```
 
 **Key Metrics:**

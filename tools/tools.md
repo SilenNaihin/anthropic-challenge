@@ -9,10 +9,13 @@ Reference documentation for all analysis and optimization tools.
 | [Slot Analyzer](#slot-analyzer) | **Completed** | `tools/slot_analyzer.py` | P0 |
 | [VLIW Auto-Packer](#vliw-auto-packer) | **Completed** | `tools/vliw_packer/` | P0 |
 | [Dependency Graph](#dependency-graph) | **Completed** | `tools/dependency_graph/` | P0 |
+| [DSL Compiler](#dsl-compiler) | **Completed** | `tools/dsl_compiler/` | P1 |
 | [Hash Pipeline](#hash-pipeline) | **Completed** | `tools/hash_pipeline/` | P1 |
+| [Hash Superoptimizer](#hash-superoptimizer) | **Completed** | `tools/hash_superopt/` | P0 |
 | [Cycle Profiler](#cycle-profiler) | **Completed** | `tools/cycle_profiler/` | P1 |
 | [Memory Analyzer](#memory-analyzer) | **Completed** | `tools/memory_analyzer/` | P1 |
 | [Constraint Validator](#constraint-validator) | **Completed** | `tools/constraint_validator/` | P2 |
+| [Register Pressure](#register-pressure) | **Completed** | `tools/register_pressure/` | P2 |
 | [Transforms](#transforms) | **Completed** | `tools/transforms/` | P2 |
 | [Kernel Diff](#kernel-diff) | **Completed** | `tools/kernel_diff/` | P2 |
 | [Optimization Loop](#optimization-loop) | **Completed** | `tools/optimization_loop/` | P3 |
@@ -104,6 +107,75 @@ python tools/dependency_graph/dependency_graph.py --json
 
 ---
 
+## DSL Compiler
+
+**Status**: Completed | **Folder**: `tools/dsl_compiler/`
+
+High-level DSL compiler for expressing algorithms in Python-like syntax, compiles to optimized VLIW instructions.
+
+### Quick Usage
+```bash
+# Compile a DSL file
+python tools/dsl_compiler/dsl_compiler.py myfile.dsl
+
+# Run demo with example
+python tools/dsl_compiler/dsl_compiler.py --demo
+
+# JSON output
+python tools/dsl_compiler/dsl_compiler.py myfile.dsl --json
+```
+
+### Features
+- Python-like syntax for algorithm expression
+- Automatic vectorization (VLEN=8 elements)
+- Hash expansion (`hash(x)` becomes 6-stage implementation)
+- Dependency analysis for correct scheduling
+- VLIW packing of independent operations
+- Automatic scratch allocation
+- Rich colored output
+- JSON output for scripting
+- KernelBuilder-compatible instruction output
+
+### DSL Syntax Overview
+```python
+# Variables
+var x              # Scalar
+vec v[8]           # Vector (VLEN=8)
+
+# Arithmetic (scalars and vectors)
+y = a + b          # Add
+z = a ^ b          # XOR
+w = hash(x)        # 6-stage hash (auto-expanded)
+
+# Memory operations
+val = load(addr)   # Scalar load
+v = vload(base)    # Vector load
+v = broadcast(x)   # Scalar -> vector
+store(addr, val)   # Scalar store
+vstore(base, v)    # Vector store
+
+# Vectorize hint
+@vectorize(8)
+def process_batch(offset):
+    vec v = vload(base + offset)
+    v = hash(v ^ key)
+    vstore(output + offset, v)
+```
+
+### Key Insight
+Instead of manually writing low-level VLIW instructions, express algorithms at a high level and let the compiler handle:
+- Register allocation
+- Dependency tracking
+- VLIW scheduling
+- Vectorization
+
+### Documentation
+- Full docs: `tools/dsl_compiler/README.md`
+- Quick ref: `tools/dsl_compiler/quickstart.md`
+- Example: `tools/dsl_compiler/hash_tree.dsl`
+
+---
+
 ## Hash Pipeline
 
 **Status**: Completed | **Folder**: `tools/hash_pipeline/`
@@ -150,6 +222,82 @@ Per-Batch Breakdown (8 elements via VLEN):
 ### Documentation
 - Full docs: `tools/hash_pipeline/README.md`
 - Quick ref: `tools/hash_pipeline/quickstart.md`
+
+---
+
+## Hash Superoptimizer
+
+**Status**: Completed | **Folder**: `tools/hash_superopt/`
+
+Exhaustively enumerates ALL legal schedules for hash operations to find THE provably optimal schedule. Unlike heuristics, this guarantees minimum cycle counts through exhaustive search.
+
+### Quick Usage
+```bash
+# Single stage analysis (3 ops)
+python tools/hash_superopt/hash_superopt.py
+
+# Full 6-stage hash (18 ops)
+python tools/hash_superopt/hash_superopt.py --stages 6
+
+# Optimal configuration: 3 batches pipelined
+python tools/hash_superopt/hash_superopt.py --stages 6 --batches 3
+
+# Analyze batch scaling (1-6 batches)
+python tools/hash_superopt/hash_superopt.py --stages 6 --scale
+
+# Emit VLIW instruction sequence
+python tools/hash_superopt/hash_superopt.py --stages 6 --emit
+
+# JSON output
+python tools/hash_superopt/hash_superopt.py --stages 6 --json
+```
+
+### Features
+- Exhaustive schedule enumeration (not heuristics)
+- Single-stage and multi-stage analysis
+- **Multi-batch pipelining** (interleave independent hashes)
+- Batch scaling analysis
+- VLIW instruction emission
+- Pareto-optimal schedule identification
+- Optimality proof (exhaustive search)
+- Rich colored output
+- JSON output for scripting
+
+### Key Finding: 3-Batch Pipelining
+
+| Batches | Total Cycles | Cycles/Hash | Speedup | VALU Util |
+|---------|-------------|-------------|---------|-----------|
+| 1       | 12          | 12.00       | 1.00x   | 25.0%     |
+| 2       | 12          | 6.00        | 2.00x   | 50.0%     |
+| **3**   | **12**      | **4.00**    | **3.00x**| **75.0%** |
+| 4       | 13          | 3.25        | 3.69x   | 92.3%     |
+
+**Sweet spot: 3 batches** - fills all 6 VALU slots for tmp1+tmp2 cycles.
+
+### Impact on Full Kernel
+- **Without pipelining**: 4096 hashes x 12 cycles = 49,152 cycles
+- **With 3-batch pipelining**: 4096 hashes x 4 cycles = 16,384 cycles
+- **Savings**: ~33,000 cycles
+
+### Key Output
+```
+Optimal Schedule (cycle-by-cycle):
+  Cycle  0: B0:[S0.tmp1, S0.tmp2] | B1:[S0.tmp1, S0.tmp2] | B2:[S0.tmp1, S0.tmp2] (6/6 VALU)
+  Cycle  1: B0:[S0.combine] | B1:[S0.combine] | B2:[S0.combine] (3/6 VALU)
+  ...
+
+This schedule is PROVABLY OPTIMAL for 3 batches.
+```
+
+### Why Use This Over hash_pipeline?
+- **hash_pipeline**: ILP analysis, theoretical bounds, realistic estimates
+- **hash_superopt**: **Exhaustive enumeration**, provably optimal schedules
+
+Use hash_superopt when you need the EXACT optimal schedule, not estimates.
+
+### Documentation
+- Full docs: `tools/hash_superopt/README.md`
+- Quick ref: `tools/hash_superopt/quickstart.md`
 
 ---
 
@@ -305,6 +453,61 @@ python tools/constraint_validator/constraint_validator.py --strict
 ### Documentation
 - Full docs: `tools/constraint_validator/README.md`
 - Quick ref: `tools/constraint_validator/quickstart.md`
+
+---
+
+## Register Pressure
+
+**Status**: Completed | **Folder**: `tools/register_pressure/`
+
+Analyzes scratch memory (register file) usage patterns to understand register pressure throughout kernel execution. Essential for determining whether further unrolling/pipelining is feasible.
+
+### Quick Usage
+```bash
+# Basic analysis
+python tools/register_pressure/register_pressure.py
+
+# Full analysis with charts
+python tools/register_pressure/register_pressure.py --all
+
+# JSON output
+python tools/register_pressure/register_pressure.py --json
+```
+
+### Features
+- Live range tracking (when each address is written and last read)
+- Pressure computation (simultaneous live values per cycle)
+- Peak detection (cycles with highest pressure)
+- Reuse opportunities (addresses that could be recycled)
+- Pressure visualization (ASCII chart over time)
+- Limit warnings (alerts when approaching 1536)
+- Rich colored output
+- JSON output for scripting
+
+### Key Metrics
+| Metric | Good | Warning | Critical |
+|--------|------|---------|----------|
+| Peak Pressure | <50% | 50-75% | >75% |
+| Headroom | >500 | 200-500 | <200 |
+
+### Key Output
+```
+Summary:
+  Addresses Used:  405/1536 (26.4%)
+  Peak Pressure:   24.2% at cycle 320
+  Headroom:        1,131 addresses
+
+Assessment: HEALTHY - Room for more optimization
+```
+
+### When to Use
+1. **Before adding unrolling** - Check if headroom exists
+2. **After optimization** - Verify pressure didn't spike
+3. **Debugging scratch overflow** - Understand usage patterns
+
+### Documentation
+- Full docs: `tools/register_pressure/README.md`
+- Quick ref: `tools/register_pressure/quickstart.md`
 
 ---
 

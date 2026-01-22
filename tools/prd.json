@@ -210,6 +210,88 @@
       },
       "usage": "python tools/optimization_loop/optimize.py [--profile] [--suggest] [--validate] [--json] [--dry-run]",
       "value": "Automates the optimization search process"
+    },
+    {
+      "id": "register_pressure",
+      "name": "Register Pressure Analyzer",
+      "file": "register_pressure/register_pressure.py",
+      "status": "completed",
+      "priority": "P2",
+      "description": "Analyze scratch memory usage patterns and register pressure over kernel execution",
+      "features": {
+        "live_range_tracking": true,
+        "pressure_computation": true,
+        "peak_detection": true,
+        "reuse_opportunities": true,
+        "pressure_visualization": true,
+        "limit_warnings": true,
+        "rich_output": true,
+        "json_output": true
+      },
+      "usage": "python tools/register_pressure/register_pressure.py [--all] [--peaks] [--reuse] [--visualize] [--json]",
+      "value": "Determine if more unrolling/pipelining is feasible based on scratch memory headroom"
+    },
+    {
+      "id": "dsl_compiler",
+      "name": "DSL Compiler",
+      "file": "dsl_compiler/dsl_compiler.py",
+      "status": "completed",
+      "priority": "P1",
+      "description": "High-level DSL compiler for expressing algorithms in Python-like syntax, compiles to optimized VLIW instructions",
+      "features": {
+        "python_like_syntax": true,
+        "automatic_vectorization": true,
+        "hash_expansion": true,
+        "dependency_analysis": true,
+        "vliw_scheduling": true,
+        "scratch_allocation": true,
+        "loop_unrolling": true,
+        "memory_operations": true,
+        "rich_output": true,
+        "json_output": true,
+        "kernel_builder_compatible": true
+      },
+      "usage": "python tools/dsl_compiler/dsl_compiler.py <file.dsl> [--json] [--demo] [--no-vectorize]",
+      "value": "Write algorithms at high level, compile to optimal VLIW - enables rapid iteration without manual instruction writing",
+      "notes": [
+        "Loops must be compile-time unrollable (no dynamic bounds)",
+        "Hash function expands to 6-stage implementation automatically",
+        "Use @vectorize(8) decorator for automatic vectorization"
+      ]
+    },
+    {
+      "id": "hash_superopt",
+      "name": "Hash Stage Superoptimizer",
+      "file": "hash_superopt/hash_superopt.py",
+      "status": "completed",
+      "priority": "P0",
+      "description": "Exhaustively enumerates ALL legal schedules for hash operations to find THE provably optimal schedule",
+      "features": {
+        "exhaustive_enumeration": true,
+        "single_stage_analysis": true,
+        "multi_stage_analysis": true,
+        "multi_batch_pipelining": true,
+        "batch_scaling_analysis": true,
+        "instruction_emission": true,
+        "pareto_optimal_schedules": true,
+        "optimality_proof": true,
+        "rich_output": true,
+        "json_output": true
+      },
+      "usage": "python tools/hash_superopt/hash_superopt.py [--stages N] [--batches N] [--scale] [--emit] [--json] [--pareto]",
+      "value": "Proves optimal hash schedule: 3-batch pipelining gives 4 cycles/hash (3x speedup, 75% VALU utilization)",
+      "key_findings": {
+        "single_hash_cycles": 12,
+        "optimal_batches": 3,
+        "cycles_per_hash_optimal": 4.0,
+        "speedup": "3.0x",
+        "valu_utilization": "75%"
+      },
+      "notes": [
+        "Unlike heuristics, guarantees optimal through exhaustive search",
+        "3-batch pipelining fills all 6 VALU slots for tmp1+tmp2 cycles",
+        "Impact: reduces hash from 49,152 to 16,384 cycles for full kernel"
+      ]
     }
   ],
   "libraries_to_install": [
