@@ -14,6 +14,23 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Combine XOR with last finish cycle
+
+**Hypothesis**: XOR uses 2 VALU ops. Last finish cycle (cycle 6) only has 1 STORE op and VALU is free. Can combine them.
+
+**Change**: Added XOR for next batch (r_nxt) during finish cycle 6, eliminating the separate emit_xor() call.
+
+**Result**: 4,947 → 4,692 cycles (31.49x speedup)
+
+**Analysis**:
+- Saved 255 cycles (1 cycle per iteration × 255 iterations with next batch)
+- XOR reads v_node_b which was loaded in cycles 1-4, so it's ready by cycle 6
+- The last iteration has no XOR needed (no next batch)
+
+**Verdict**: Keep - clean optimization with no downsides.
+
+---
+
 ## [2025-01-22] - Pipeline v_node_a loads during hash cycles 8-11
 
 **Hypothesis**: LOAD engine is free during hash cycles 8-15. Can move v_node_a scattered loads into cycles 8-11 (4 cycles × 2 loads = 8 loads), saving 4 cycles from finish phase.

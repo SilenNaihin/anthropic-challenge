@@ -364,8 +364,11 @@ class KernelBuilder:
                 "store": [("vstore", r['idx_base_a'], r['v_idx_a'])],
             })
 
-            # Cycle 6: STORE (1 slot)
-            self.instrs.append({"store": [("vstore", r['idx_base_b'], r['v_idx_b'])]})
+            # Cycle 6: STORE (1 slot) + VALU (2 slots for XOR of next batch)
+            instr6 = {"store": [("vstore", r['idx_base_b'], r['v_idx_b'])]}
+            if has_next:
+                instr6["valu"] = [("^", r_nxt['v_val_a'], r_nxt['v_val_a'], r_nxt['v_node_a']), ("^", r_nxt['v_val_b'], r_nxt['v_val_b'], r_nxt['v_node_b'])]
+            self.instrs.append(instr6)
 
         def emit_xor(r):
             """Emit XOR for a batch after scattered loads complete."""
@@ -449,12 +452,8 @@ class KernelBuilder:
                 # Last iteration: just hash
                 emit_hash_only(r_cur)
 
-            # Finish current batch (v_node_a loaded during hash, v_node_b during finish)
+            # Finish current batch (v_node_a loaded during hash, v_node_b + XOR during finish)
             emit_finish_with_loads(r_cur, r_nxt, has_next)
-
-            # XOR for next batch (all scattered loads complete)
-            if has_next:
-                emit_xor(r_nxt)
 
         self.instrs.append({"flow": [("pause",)]})
 
