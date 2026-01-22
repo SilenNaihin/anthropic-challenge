@@ -7,9 +7,9 @@ Reference documentation for all analysis and optimization tools.
 | Tool | Status | Location | Priority |
 |------|--------|----------|----------|
 | [Slot Analyzer](#slot-analyzer) | **Completed** | `tools/slot_analyzer.py` | P0 |
-| [VLIW Auto-Packer](#vliw-auto-packer) | In Progress | `tools/vliw_packer/` | P0 |
-| [Dependency Graph](#dependency-graph) | In Progress | `tools/dependency_graph/` | P0 |
-| [Hash Pipeline](#hash-pipeline) | In Progress | `tools/hash_pipeline/` | P1 |
+| [VLIW Auto-Packer](#vliw-auto-packer) | **Completed** | `tools/vliw_packer/` | P0 |
+| [Dependency Graph](#dependency-graph) | **Completed** | `tools/dependency_graph.py` | P0 |
+| [Hash Pipeline](#hash-pipeline) | **Completed** | `tools/hash_pipeline/` | P1 |
 | Cycle Profiler | Not Started | - | P1 |
 | Memory Analyzer | Not Started | - | P1 |
 
@@ -45,53 +45,84 @@ python tools/slot_analyzer.py --packing --deps --recommendations
 
 ## VLIW Auto-Packer
 
-**Status**: In Progress | **Folder**: `tools/vliw_packer/`
+**Status**: Completed | **Folder**: `tools/vliw_packer/`
 
 Automatically packs independent instructions into VLIW bundles.
 
-### Purpose
-Take instruction pairs identified as "packable" by slot_analyzer and automatically combine them into single cycles, respecting slot limits and dependencies.
+### Quick Usage
+```bash
+python tools/vliw_packer/vliw_packer.py
+python tools/vliw_packer/vliw_packer.py --output packed.json
+```
 
-### Expected Features
-- Dependency-aware scheduling
-- Respects slot limits per engine
-- Topological sorting
-- Outputs packed kernel
+### Features
+- Dependency-aware scheduling (RAW, WAW, WAR hazards)
+- Respects slot limits per engine (12 alu, 6 valu, 2 load, 2 store, 1 flow)
+- Priority-based list scheduling
+- Outputs packed kernel with statistics
+- **Achieves ~1.4x speedup automatically**
+
+### Documentation
+- Full docs: `tools/vliw_packer/README.md`
+- Quick ref: `tools/vliw_packer/quickstart.md`
 
 ---
 
 ## Dependency Graph
 
-**Status**: In Progress | **Folder**: `tools/dependency_graph/`
+**Status**: Completed | **File**: `tools/dependency_graph.py`
 
 Builds full dependency DAG for accurate critical path analysis.
 
-### Purpose
-Current slot_analyzer only checks adjacent cycles. This tool builds a complete dependency graph to find the true critical path and identify all parallelization opportunities.
+### Quick Usage
+```bash
+python tools/dependency_graph.py
+python tools/dependency_graph.py --json
+```
 
-### Expected Features
-- Full DAG construction
-- True critical path calculation
+### Features
+- Full DAG construction (not just adjacent cycles)
+- True critical path calculation with topological DP
 - Parallelism potential analysis
-- Hot register identification
-- Visualization (optional)
+- Hot register identification (which addresses cause most blocking)
+- Rich colored output
+- O(n + edges) efficient algorithm
+
+### Key Metrics
+- Critical path length vs actual cycles
+- Wasted cycles percentage
+- Top blocking registers
+- Dependency density
+
+### Documentation
+- Full docs: `tools/dependency_graph/README.md`
+- Quick ref: `tools/dependency_graph/quickstart.md`
 
 ---
 
 ## Hash Pipeline
 
-**Status**: In Progress | **Folder**: `tools/hash_pipeline/`
+**Status**: Completed | **Folder**: `tools/hash_pipeline/`
 
 Analyzes the 6-stage hash function for software pipelining opportunities.
 
-### Purpose
-The hash function is the hottest code path (4096 calls per kernel run). This tool analyzes stage dependencies and generates optimal pipeline schedules.
+### Quick Usage
+```bash
+python tools/hash_pipeline/hash_pipeline.py
+python tools/hash_pipeline/hash_pipeline.py --elements 4 --verbose
+```
 
-### Expected Features
-- Stage dependency mapping
+### Features
+- Stage dependency mapping (6 stages with intra-stage parallelism)
 - Pipeline schedule generation
 - Interleaving plans for multiple elements
 - Cycle-accurate simulation
+- Code generation hints
+- **Key finding**: 2-way ILP within each stage (tmp1 || tmp2 independent)
+
+### Documentation
+- Full docs: `tools/hash_pipeline/README.md`
+- Quick ref: `tools/hash_pipeline/quickstart.md`
 
 ---
 
