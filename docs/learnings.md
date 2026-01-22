@@ -55,3 +55,40 @@ Document insights, gotchas, and what worked vs didn't.
 - **Packing ops that share write/read in same cycle**: Reads see old values, writes happen at end
 - **Triple batch hash**: 32 batches / 3 doesn't divide evenly, complex remainder handling
 - **Overlapping scattered loads with valu**: Everything depends on loaded data
+
+---
+
+## Software Pipelining Strategy
+
+### Theoretical Opportunity
+During 16 hash cycles (uses 4 of 6 VALU slots), we have free capacity:
+- ALU: 12 slots completely free
+- LOAD: 2 slots completely free
+- VALU: 2 slots free (hash uses 4)
+
+For NEXT batch, we need:
+- addr comp: 1 cycle ALU
+- vloads: 2 cycles LOAD
+- tree addr: 1 cycle VALU (only 2 ops - fits in free slots!)
+- extract: 2 cycles ALU
+- scattered loads: 8 cycles LOAD
+Total: 14 cycles fits in 16 hash cycles
+
+### Key Insight
+Tree address computation (2 VALU ops) can run DURING hash cycles using the 2 free VALU slots. This is the critical enabler for full software pipelining.
+
+### Implementation Complexity
+- Requires double-buffering registers (cur/nxt sets)
+- Register swap logic at end of each iteration is error-prone
+- Careful tracking of which register holds what state
+- Easy to accidentally share registers between unrelated values
+
+### Current Bottleneck Analysis
+Per iteration at 8,517 cycles / 128 iterations = 66.5 cycles:
+- Setup (addr, vloads, tree addr, extract): ~7 cycles
+- Scattered loads: 8 cycles
+- XOR: 1 cycle
+- Hash: 16 cycles
+- Index computation: 3 cycles
+- Stores: 3 cycles
+Total: ~38 cycles theoretical, ~66 actual (overhead from loop unrolling?)

@@ -14,6 +14,30 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Failed: Full software pipelining attempt
+
+**Hypothesis**: During 16 hash cycles (VALU), ALU and LOAD engines are free. Could overlap preparation of next batch:
+- Cycle 0: addr comp for next (ALU)
+- Cycles 1-2: vloads for next (LOAD)
+- Cycle 3: tree addr for next (VALU - 2 free slots!)
+- Cycles 4-5: extract for next (ALU)
+- Cycles 6-13: scattered loads for next (LOAD)
+Expected to save ~14 cycles per iteration = ~1800 cycles total.
+
+**Change**: Implemented full software pipelining with register double-buffering (cur/nxt register sets).
+
+**Result**: Correctness failure - "Incorrect result on round 1". The register swapping logic was buggy.
+
+**Analysis**:
+- The idea is sound (14 cycles of prep fit within 16 hash cycles)
+- Tree addr can use 2 free VALU slots during hash (hash uses 4 of 6)
+- Implementation complexity is high due to register handoff between iterations
+- Likely bug in swap logic where v_tmp1_cur was reused for both tree addresses and intermediate values
+
+**Verdict**: Reverted. Need cleaner implementation approach.
+
+---
+
 ## [2025-01-22] - Combined vselect with stores and packed index ops
 
 **Hypothesis**: vselect uses flow engine, vstore uses store engine - can run in same cycle. Also & and multiply_add are independent and can be packed.
