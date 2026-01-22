@@ -197,6 +197,71 @@ index_calc              156       19.7%        8.1%
 
 ---
 
+## Memory Analyzer
+
+**Status**: Completed | **Folder**: `tools/memory_analyzer/`
+
+Analyzes load/store patterns to identify vectorization opportunities and blockers. Reveals **WHY** `vload`/`vstore` can't be used in certain places.
+
+### Quick Usage
+```bash
+# Full analysis
+python tools/memory_analyzer/memory_analyzer.py
+
+# JSON output
+python tools/memory_analyzer/memory_analyzer.py --json
+
+# Verbose with details
+python tools/memory_analyzer/memory_analyzer.py --verbose
+```
+
+### Features
+- Access pattern detection (sequential, strided, scattered, broadcast)
+- Stride analysis for consecutive memory accesses
+- Vectorization blocker identification
+- Address source tracking (constant, linear, computed, indirect)
+- Rich colored output
+- Recommendations for optimization
+
+### Key Insight
+
+Tree lookups produce **scattered addresses** that CANNOT be vectorized:
+
+```
+Element 0: needs tree[42]   \
+Element 1: needs tree[17]    > Not consecutive - vload impossible
+Element 2: needs tree[891]  /
+```
+
+This is inherent to tree traversal where hash results determine next index.
+
+### Key Output
+```
+Metric                              Count     Elements
+------------------------------------------------------------
+Scalar Loads                          234          234
+Vector Loads (vload)                   45          360
+Scattered Loads (tree lookups)        156            -
+
+Vectorization Rate: 67.9%
+Sequential Opportunity: ~23 potential vloads
+```
+
+### Access Patterns
+
+| Pattern | Vectorizable? | Description |
+|---------|--------------|-------------|
+| Sequential | Yes | Contiguous addresses (use vload/vstore) |
+| Strided | Maybe | Regular stride (gather possible) |
+| **Scattered** | **No** | Computed addresses (tree lookups) |
+| Broadcast | Use vbroadcast | Same address multiple times |
+
+### Documentation
+- Full docs: `tools/memory_analyzer/README.md`
+- Quick ref: `tools/memory_analyzer/quickstart.md`
+
+---
+
 ## Constraint Validator
 
 **Status**: Completed | **Folder**: `tools/constraint_validator/`
