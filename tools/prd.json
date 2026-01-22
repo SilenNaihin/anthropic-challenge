@@ -37,31 +37,36 @@
       "id": "dependency_graph",
       "name": "Dependency Graph Builder",
       "file": "dependency_graph.py",
-      "status": "not_started",
+      "status": "completed",
       "priority": "P0",
-      "description": "Build DAG of instruction dependencies (RAW, WAR, WAW hazards)",
+      "description": "Build full DAG of instruction dependencies (RAW, WAR, WAW hazards)",
       "features": {
-        "build_dag": false,
-        "critical_path": false,
-        "parallelism_potential": false,
-        "visualize": false
+        "build_dag": true,
+        "critical_path": true,
+        "parallelism_potential": true,
+        "hot_registers": true,
+        "rich_output": true,
+        "json_output": true
       },
+      "usage": "python tools/dependency_graph.py [--json] [--top N]",
       "value": "Essential for understanding what PREVENTS packing"
     },
     {
       "id": "vliw_packer",
       "name": "VLIW Auto-Packer",
-      "file": "vliw_packer.py",
-      "status": "not_started",
+      "file": "vliw_packer/vliw_packer.py",
+      "status": "completed",
       "priority": "P0",
       "description": "Automatically pack independent instructions into VLIW bundles",
       "features": {
-        "dependency_aware": false,
-        "respects_slot_limits": false,
-        "topological_scheduling": false,
-        "outputs_packed_kernel": false
+        "dependency_aware": true,
+        "respects_slot_limits": true,
+        "priority_scheduling": true,
+        "outputs_packed_kernel": true,
+        "statistics_report": true
       },
-      "value": "Automates the tedious packing work"
+      "usage": "python tools/vliw_packer/vliw_packer.py [--output FILE] [--verbose]",
+      "value": "Achieves ~1.4x speedup automatically"
     },
     {
       "id": "cycle_profiler",
@@ -94,16 +99,29 @@
     {
       "id": "hash_pipeline",
       "name": "Hash Pipeline Analyzer",
-      "file": "hash_pipeline.py",
-      "status": "not_started",
+      "file": "hash_pipeline/hash_pipeline.py",
+      "status": "completed",
       "priority": "P1",
-      "description": "Analyze 6-stage hash function for software pipelining",
+      "description": "ILP analysis tool for 6-stage hash function software pipelining",
       "features": {
-        "stage_dependency_map": false,
-        "pipeline_schedule": false,
-        "interleaving_plan": false
+        "stage_dependency_analysis": true,
+        "intra_stage_parallelism": true,
+        "inter_element_pipelining": true,
+        "scheduling_strategies": true,
+        "theoretical_minimum_calc": true,
+        "realistic_estimates": true,
+        "batch_size_analysis": true,
+        "code_generation_hints": true,
+        "schedule_visualization": true,
+        "json_output": true
       },
-      "value": "Hash is the hottest code - pipelining is critical"
+      "usage": "python tools/hash_pipeline/hash_pipeline.py [--elements N] [--visualize] [--codegen] [--realistic]",
+      "value": "Hash is the hottest code path (4096 calls) - understanding ILP is critical",
+      "notes": [
+        "Provides THEORETICAL lower bounds, not achievable targets",
+        "Real implementations will have additional overhead",
+        "Always validate with slot_analyzer on actual code"
+      ]
     },
     {
       "id": "constraint_validator",

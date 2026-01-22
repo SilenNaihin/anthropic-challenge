@@ -2,6 +2,13 @@
 
 Analyzes the 6-stage hash function dependency structure and generates optimal pipeline schedules for maximum throughput on the VLIW SIMD architecture.
 
+## Important Disclaimers
+
+- This is an **ILP analysis tool**, NOT a cycle-accurate simulator
+- Cycle counts shown are **theoretical lower bounds**, not achievable targets
+- Real implementations will have additional overhead from vbroadcast, memory ops, loop control
+- **Always validate** with `slot_analyzer.py` on actual instruction streams
+
 ## Why This Tool?
 
 The hash function runs **4096 times** per kernel execution (256 batch x 16 rounds). It is THE hottest code path. Even small improvements here have massive impact on total cycle count.
@@ -143,6 +150,17 @@ Consider restructuring the hash to be more SIMD-friendly (e.g., processing 8 val
 
 ### 4. Multi-Batch Pipelining
 Process 2+ batches of 8 elements simultaneously, hiding latencies between stages.
+
+## Realistic Estimates
+
+The tool now includes realistic cycle estimates that account for:
+- vbroadcast operations (inline vs pre-loaded constants)
+- Memory operations (load/store)
+- XOR with node value
+- Index calculations
+- Loop overhead
+
+Run with `--realistic` flag or full analysis includes this automatically.
 
 ## Files
 

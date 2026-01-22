@@ -104,21 +104,44 @@ python tools/dependency_graph.py --json
 
 **Status**: Completed | **Folder**: `tools/hash_pipeline/`
 
-Analyzes the 6-stage hash function for software pipelining opportunities.
+ILP analysis tool for the 6-stage hash function - the hottest code path (4096 calls per kernel).
+
+### Important Note
+This is an **ILP analysis tool**, not a cycle-accurate simulator. Cycle counts are theoretical lower bounds. Always validate with `slot_analyzer.py` on actual instruction streams.
 
 ### Quick Usage
 ```bash
+# Full analysis (includes realistic estimates)
 python tools/hash_pipeline/hash_pipeline.py
-python tools/hash_pipeline/hash_pipeline.py --elements 4 --verbose
+
+# With visualization
+python tools/hash_pipeline/hash_pipeline.py --visualize --elements 8
+
+# Code generation hints
+python tools/hash_pipeline/hash_pipeline.py --codegen
+
+# JSON output
+python tools/hash_pipeline/hash_pipeline.py --json
 ```
 
 ### Features
-- Stage dependency mapping (6 stages with intra-stage parallelism)
-- Pipeline schedule generation
-- Interleaving plans for multiple elements
-- Cycle-accurate simulation
-- Code generation hints
+- Stage dependency analysis (identifies tmp1 || tmp2 independence)
+- Multiple scheduling strategies (sequential, intra-parallel, pipelined, max-pipelined)
+- Theoretical minimum calculations (throughput vs latency limited)
+- **Realistic estimates** with overhead (vbroadcast, memory, loop control)
+- Batch size analysis for optimal vectorization
+- VLIW code generation hints
+- Schedule visualization
 - **Key finding**: 2-way ILP within each stage (tmp1 || tmp2 independent)
+
+### Key Output
+```
+Per-Batch Breakdown (8 elements via VLEN):
+  Hash computation (6 stages x 2):  12 cycles
+  vbroadcast overhead:              0-12 cycles (pre-load vs inline)
+  Memory/loop/index:                6+ cycles
+  TOTAL (optimized):                ~20 cycles/batch
+```
 
 ### Documentation
 - Full docs: `tools/hash_pipeline/README.md`

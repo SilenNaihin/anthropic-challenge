@@ -8,12 +8,23 @@ optimal pipeline schedules for maximum throughput.
 The hash function runs 4096 times (256 batch x 16 rounds) - this is THE
 hottest code path. Each stage has internal parallelism that can be exploited.
 
+IMPORTANT DISCLAIMERS:
+- This is an ILP analysis tool, NOT a cycle-accurate simulator
+- Cycle counts shown are THEORETICAL LOWER BOUNDS, not achievable targets
+- Real implementations will have additional overhead from:
+  * vbroadcast operations for constants
+  * Memory loads/stores for input/output
+  * Loop control and flow operations
+  * Register pressure and potential spills
+- Always validate against slot_analyzer.py on actual instruction streams
+
 Usage:
     python hash_pipeline.py                    # Full analysis with defaults
     python hash_pipeline.py --elements 8       # Analyze pipeline for 8 elements
     python hash_pipeline.py --visualize        # Show cycle-by-cycle schedule
     python hash_pipeline.py --codegen          # Generate VLIW code hints
     python hash_pipeline.py --compare          # Compare pipelined vs sequential
+    python hash_pipeline.py --realistic        # Show realistic estimates with overhead
 """
 
 import argparse
@@ -46,9 +57,10 @@ HASH_STAGES = [
 
 class OpType(Enum):
     """Operation types for scheduling"""
-    TMP1 = "tmp1"      # a op1 const1
-    TMP2 = "tmp2"      # a op3 const3 (shift)
-    COMBINE = "combine" # tmp1 op2 tmp2
+    TMP1 = "tmp1"           # a op1 const1
+    TMP2 = "tmp2"           # a op3 const3 (shift)
+    COMBINE = "combine"     # tmp1 op2 tmp2
+    VBROADCAST = "vbcast"   # vbroadcast constant (overhead not in ideal model)
 
 
 @dataclass
@@ -527,6 +539,118 @@ class HashPipelineAnalyzer:
 
         return results
 
+    def calculate_realistic_estimate(self) -> dict:
+        """
+        Calculate more realistic cycle estimates including overhead.
+
+        This accounts for operations the idealized model ignores:
+        - vbroadcast for constants (2 per stage if not pre-loaded)
+        - Memory operations (load input, store output)
+        - Loop control overhead
+        - Register pressure effects
+        """
+        n = self.n_elements
+        n_stages = 6
+
+        # Base hash operations (idealized)
+        ideal = self.calculate_theoretical_minimum()
+
+        # Additional overhead per hash call:
+        # 1. vbroadcast: 2 per stage (const and shift) if done inline
+        #    With pre-loading: 0 (constants loaded once before loop)
+        #    Conservative: assume 1 cycle to load from pre-broadcasted constant
+        vbroadcast_overhead_inline = n_stages * 2  # 12 vbroadcasts per hash
+        vbroadcast_overhead_preload = 0  # if constants pre-loaded
+
+        # 2. Memory operations per batch of VLEN elements:
+        #    - 1 vload for input values
+        #    - 1 vload for node values (tree lookup)
+        #    - 1 vstore for output values
+        #    - 1 vload/vstore for indices
+        #    These compete with 2 load/store slots
+        memory_ops_per_batch = 4  # vload input, vload node, vstore output, vload/store idx
+
+        # 3. Loop control: jump, counter update, etc.
+        #    ~2-3 cycles per batch iteration (with good packing)
+        loop_overhead_per_batch = 2
+
+        # 4. XOR with node value before hash (1 VALU op)
+        xor_overhead = 1
+
+        # 5. Index calculation after hash (branch decision, multiply, add)
+        index_calc_overhead = 3
+
+        # Calculate per-batch cycles (batch = VLEN elements)
+        batches = (n + VLEN - 1) // VLEN
+
+        # Hash cycles per batch (using vectorized ops)
+        # 6 stages * 3 ops = 18 ops, but tmp1||tmp2 so 12 effective cycles
+        # With 6 VALU slots, we need ceil(12/6) = 2 cycles minimum per stage
+        # But dependency limited: 2 cycles per stage (tmp||tmp, then combine)
+        hash_cycles_per_batch = n_stages * 2  # 12 cycles
+
+        # Add overhead
+        total_per_batch_conservative = (
+            hash_cycles_per_batch +
+            vbroadcast_overhead_inline +
+            xor_overhead +
+            index_calc_overhead +
+            loop_overhead_per_batch
+        )
+
+        total_per_batch_optimized = (
+            hash_cycles_per_batch +
+            vbroadcast_overhead_preload +
+            xor_overhead +
+            index_calc_overhead +
+            loop_overhead_per_batch
+        )
+
+        # Memory ops can often be overlapped with ALU
+        # But they're limited to 2 slots/cycle
+        memory_cycles = (memory_ops_per_batch + 1) // 2
+
+        # Full kernel: 256 batch * 16 rounds = 4096 hash calls
+        # But with VLEN=8, that's 512 batch iterations (256/8 * 16 rounds... wait)
+        # Actually: 256 elements * 16 rounds = 4096 element-iterations
+        # With VLEN=8: 4096/8 = 512 vector iterations
+        total_hash_iterations = 4096
+        vector_iterations = total_hash_iterations // VLEN
+
+        return {
+            "elements_analyzed": n,
+            "ideal_cycles_per_element": ideal["theoretical_min_cycles"] / n if n > 0 else 0,
+
+            "per_batch_breakdown": {
+                "hash_computation": hash_cycles_per_batch,
+                "vbroadcast_inline": vbroadcast_overhead_inline,
+                "vbroadcast_preload": vbroadcast_overhead_preload,
+                "xor_with_node": xor_overhead,
+                "index_calculation": index_calc_overhead,
+                "loop_overhead": loop_overhead_per_batch,
+                "memory_ops": memory_cycles,
+            },
+
+            "per_batch_total_conservative": total_per_batch_conservative + memory_cycles,
+            "per_batch_total_optimized": total_per_batch_optimized + memory_cycles,
+
+            "full_kernel": {
+                "total_hash_calls": total_hash_iterations,
+                "vector_iterations": vector_iterations,
+                "cycles_conservative": vector_iterations * (total_per_batch_conservative + memory_cycles),
+                "cycles_optimized": vector_iterations * (total_per_batch_optimized + memory_cycles),
+                "cycles_ideal_unreachable": vector_iterations * hash_cycles_per_batch,
+            },
+
+            "notes": [
+                "Conservative: inline vbroadcast each stage",
+                "Optimized: pre-broadcast constants before loop",
+                "Ideal: pure hash ops only, no overhead (UNREACHABLE)",
+                "Memory ops assumed to partially overlap with compute",
+                "Does not account for register spills or scratch limits",
+            ]
+        }
+
     def generate_code_hints(self) -> list[str]:
         """Generate VLIW assembly hints for optimal implementation"""
         hints = []
@@ -649,7 +773,57 @@ class HashPipelineAnalyzer:
         print("\nRecommendation: Process in batches of 8 (VLEN) or 16 for best efficiency")
         return results
 
-    def full_analysis(self, visualize: bool = False, codegen: bool = False):
+    def print_realistic_estimate(self):
+        """Print realistic cycle estimates with overhead breakdown"""
+        est = self.calculate_realistic_estimate()
+
+        print("\n" + "=" * 70)
+        print("REALISTIC CYCLE ESTIMATES (with overhead)")
+        print("=" * 70)
+        print("\n*** DISCLAIMER: These are estimates, not guarantees ***")
+        print("*** Always validate with slot_analyzer on real code  ***\n")
+
+        print("Per-Batch Breakdown (1 batch = 8 elements via VLEN):")
+        print("-" * 50)
+        bd = est["per_batch_breakdown"]
+        print(f"  Hash computation (6 stages x 2):  {bd['hash_computation']:>4} cycles")
+        print(f"  vbroadcast (inline, 6 x 2):       {bd['vbroadcast_inline']:>4} cycles")
+        print(f"  vbroadcast (pre-loaded):          {bd['vbroadcast_preload']:>4} cycles")
+        print(f"  XOR with node value:              {bd['xor_with_node']:>4} cycles")
+        print(f"  Index calculation:                {bd['index_calculation']:>4} cycles")
+        print(f"  Loop overhead:                    {bd['loop_overhead']:>4} cycles")
+        print(f"  Memory ops (load/store):          {bd['memory_ops']:>4} cycles")
+        print("-" * 50)
+        print(f"  TOTAL (conservative):             {est['per_batch_total_conservative']:>4} cycles/batch")
+        print(f"  TOTAL (optimized):                {est['per_batch_total_optimized']:>4} cycles/batch")
+
+        print("\nFull Kernel Estimate (256 batch x 16 rounds = 4096 hashes):")
+        print("-" * 50)
+        fk = est["full_kernel"]
+        print(f"  Vector iterations (4096/8):       {fk['vector_iterations']:>6}")
+        print(f"  Cycles (conservative):            {fk['cycles_conservative']:>6}")
+        print(f"  Cycles (optimized):               {fk['cycles_optimized']:>6}")
+        print(f"  Cycles (ideal, UNREACHABLE):      {fk['cycles_ideal_unreachable']:>6}")
+
+        print("\nContext:")
+        print(f"  Current baseline:                 ~8,500 cycles")
+        print(f"  Target (Opus 4.5 best):            1,487 cycles")
+        print(f"  Our optimized estimate:           {fk['cycles_optimized']:>6} cycles")
+
+        gap = fk['cycles_optimized'] - 1487
+        if gap > 0:
+            print(f"\n  Gap to target:                    {gap:>6} cycles")
+            print("  (Need additional optimizations beyond hash pipelining)")
+        else:
+            print(f"\n  Under target by:                  {-gap:>6} cycles")
+
+        print("\nNotes:")
+        for note in est["notes"]:
+            print(f"  - {note}")
+
+        return est
+
+    def full_analysis(self, visualize: bool = False, codegen: bool = False, realistic: bool = False):
         """Run complete analysis"""
         self.print_stage_analysis()
 
@@ -666,7 +840,7 @@ class HashPipelineAnalyzer:
         # Theoretical minimums
         theory = self.calculate_theoretical_minimum()
         print("\n" + "=" * 70)
-        print("THEORETICAL ANALYSIS")
+        print("THEORETICAL ANALYSIS (idealized, lower bound only)")
         print("=" * 70)
         print(f"Elements: {theory['elements']}")
         print(f"Total operations: {theory['total_operations']}")
@@ -675,12 +849,16 @@ class HashPipelineAnalyzer:
         print(f"Throughput limit: {theory['throughput_limited_min']} cycles (VALU limited)")
         print(f"Latency limit: {theory['latency_limited_min']} cycles (dependency limited)")
         print(f"Theoretical minimum: {theory['theoretical_min_cycles']} cycles")
+        print("\n*** NOTE: These are LOWER BOUNDS - real implementation will be higher ***")
 
         # Compare strategies
         comparison = self.print_comparison()
 
         # Batch analysis
         self.analyze_batch_sizes()
+
+        # Realistic estimates (always show in full analysis)
+        self.print_realistic_estimate()
 
         # Visualization
         if visualize:
@@ -723,6 +901,8 @@ Examples:
                         help="Output results as JSON")
     parser.add_argument("--scalar", "-s", action="store_true",
                         help="Use scalar ALU instead of vector VALU")
+    parser.add_argument("--realistic", "-r", action="store_true",
+                        help="Show realistic estimates with overhead (included in full analysis)")
 
     args = parser.parse_args()
 
