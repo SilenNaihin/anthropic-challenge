@@ -14,6 +14,27 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Overlap scattered loads with finish operations
+
+**Hypothesis**: During emit_finish (6 cycles), LOAD engine is completely free. Can do 12 of 16 scattered loads in parallel, leaving only 4 for afterward.
+
+**Change**: Created `emit_finish_with_loads` that overlaps scattered loads during finish:
+- Cycles 1-6: finish operations (VALU, FLOW, STORE) + 2 loads each
+- After finish: only 4 loads remain (addr_b[4:8])
+
+**Result**: 6,987 → 5,457 cycles (27.07x speedup)
+
+**Analysis**:
+- Saved 1,530 cycles (6 cycles per iteration × 128 iterations - some overhead)
+- Per iteration now: 16 hash + 6 finish (with 12 loads) + 2 remaining loads + 1 XOR = 25 cycles
+- Failed attempt: Moving ALL scattered loads into hash cycles 7-15 caused correctness failures
+  - Theory was sound (addr computed by cycle 6, loads in cycles 7-14)
+  - Root cause unclear - possibly timing/dependency issue at round boundaries
+
+**Verdict**: Keep - significant improvement with working correctness.
+
+---
+
 ## [2025-01-22] - Partial software pipelining: addr, vloads, tree addr, extract
 
 **Hypothesis**: Even if full pipelining with scattered loads failed, we can still pipeline the simpler parts:

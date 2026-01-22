@@ -83,16 +83,23 @@ Tree address computation (2 VALU ops) can run DURING hash cycles using the 2 fre
 - Careful tracking of which register holds what state
 - Easy to accidentally share registers between unrelated values
 
-### Current Bottleneck Analysis (6,987 cycles)
-Per iteration at 6,987 cycles / 128 iterations = 54.6 cycles:
+### Current Bottleneck Analysis (5,457 cycles)
+Per iteration at 5,457 cycles / 128 iterations = 42.6 cycles:
 - Hash (with overlapped prep): 16 cycles
   - Overlaps: addr comp, vloads, tree addr, extract for next batch
-- Finish (index comp, bounds, stores): 6 cycles
-- Scattered loads: 8 cycles (NOT overlapped yet)
+- Finish (with 12 overlapped loads): 6 cycles
+- Remaining scattered loads: 2 cycles (addr_b[4:8])
 - XOR: 1 cycle
-Total counted: ~31 cycles per iteration
+Total counted: 25 cycles per iteration (42.6 actual = ~18 cycles overhead)
+
+### What Didn't Work: Scattered Loads During Hash
+Attempted to move all 16 scattered loads into hash cycles 7-15 (9 cycles available). Theory was sound:
+- addr_a computed at cycle 5, addr_b[0:4] at cycle 5, addr_b[4:8] at cycle 6
+- Loads starting at cycle 7 should have all addresses available
+- Result: Correctness failure ("Incorrect output values")
+- Hypothesis: Timing issue at round boundaries or register dependency bug
 
 ### Remaining Optimization Opportunities
-1. **Overlap scattered loads with finish**: LOAD engine is free during emit_finish() (6 cycles). Can do 12 of 16 scattered loads there, leaving only 4 for after.
-2. **Triple-batch processing**: Use all 6 VALU slots during hash instead of 4.
-3. **Loop overhead reduction**: Current unrolling may have inefficiencies at round boundaries.
+1. **Triple-batch processing**: Use all 6 VALU slots during hash instead of 4. Would lose tree addr pipelining (uses 2 free VALU slots).
+2. **Loop overhead reduction**: ~18 cycles overhead per iteration unexplained.
+3. **Further LOAD engine utilization**: During hash cycles 7-15, LOAD is free but can't be used due to correctness issues.
