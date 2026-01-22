@@ -14,6 +14,30 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Partial software pipelining: addr, vloads, tree addr, extract
+
+**Hypothesis**: Even if full pipelining with scattered loads failed, we can still pipeline the simpler parts:
+- Address computation (ALU) during hash cycle 0
+- vloads (LOAD) during hash cycles 2-3
+- Tree addresses (VALU - 2 free slots) during hash cycle 4
+- Extract (ALU) during hash cycles 5-6
+
+This should save ~7 cycles per iteration.
+
+**Change**: Implemented partial software pipelining using double-buffered register sets (regs_E, regs_O). The `emit_hash_with_full_prep` function overlaps addr/vloads/tree_addr/extract computation for batch K+1 during hash of batch K.
+
+**Result**: 8,517 → 6,987 cycles (21.14x speedup)
+
+**Analysis**:
+- Saved ~1,530 cycles total (~12 cycles per iteration)
+- Key insight: Tree address uses 2 VALU ops which fit in the 2 free slots during hash (hash uses 4 of 6)
+- Scattered loads still happen sequentially after finish, but prep work is now overlapped
+- Double-buffering avoids the buggy pointer-swapping from previous attempt
+
+**Verdict**: Keep - significant improvement with clean implementation.
+
+---
+
 ## [2025-01-22] - Failed: Full software pipelining attempt
 
 **Hypothesis**: During 16 hash cycles (VALU), ALU and LOAD engines are free. Could overlap preparation of next batch:
