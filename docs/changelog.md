@@ -14,6 +14,35 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Implement finish-hash overlap with 3-way register rotation
+
+**Hypothesis**: finish_late (cycles 3-5: bounds check and stores) can be overlapped with the next hash's B cycles, which have 4 free VALU slots and free STORE slots. This requires 3 register sets to avoid conflicts between prep and previous finish_late.
+
+**Change**:
+1. Added third register set (R0, R1, R2) for 3-way rotation
+2. Split emit_finish_with_loads into emit_finish_early (cycles 1-2) and emit_finish_late (cycles 3-5)
+3. Created emit_hash_with_finish_overlap that overlaps:
+   - finish_late < comparison in hash B cycle 7
+   - finish_late multiply_add + vstore in hash B cycle 9
+   - finish_late vstore in hash B cycle 11
+4. Updated main loop timeline:
+   - iter 0: full setup + hash + full finish (no overlap)
+   - iter 1: hash + finish_early only (iter 0 did its own finish_late)
+   - iter 2 to N-2: hash (with finish_late for iter-1) + finish_early
+   - iter N-1: hash (with finish_late for iter-2) + full finish
+
+**Result**: 4,436 → 3,674 cycles (40.21x speedup)
+
+**Analysis**:
+- Saved 762 cycles (~3 cycles per iteration for 254 overlapped iterations)
+- Per iteration now: 12 (hash with finish_late overlap) + 2 (finish_early) = 14 cycles
+- iter 0 and iter 1 are special cases with no overlap benefit
+- The 3-way rotation ensures r_prev (for finish_late) != r_nxt (for prep)
+
+**Verdict**: Keep - significant improvement from overlapping finish with hash.
+
+---
+
 ## [2025-01-22] - Restructure pipeline: skip extract, use v_taddr directly
 
 **Hypothesis**: Skipping the extract step (copying v_taddr to scalar addr) and using v_taddr directly for scattered loads should save ALU cycles and allow more scattered loads during hash.

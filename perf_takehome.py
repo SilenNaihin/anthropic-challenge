@@ -118,10 +118,11 @@ class KernelBuilder:
         return instrs
 
     def build_kernel(self, forest_height: int, n_nodes: int, batch_size: int, rounds: int):
-        """Software-pipelined vectorized dual-batch implementation.
+        """Software-pipelined vectorized dual-batch implementation with finish-hash overlap.
 
-        Key optimization: Overlap preparation of batch K+1 with hash computation of batch K.
-        During 16 hash cycles, we use free ALU/LOAD engines for next batch prep.
+        Key optimizations:
+        - Overlap preparation of batch K+1 with hash computation of batch K
+        - Overlap finish_late of batch K-1 with hash of batch K (using 3-way register rotation)
         """
         tmp1 = self.alloc_scratch("tmp1")
         tmp2 = self.alloc_scratch("tmp2")
@@ -141,8 +142,8 @@ class KernelBuilder:
 
         self.instrs.append({"flow": [("pause",)]})
 
-        # Two complete register sets: even (E) and odd (O) iterations
-        # Each set has everything needed for a dual-batch iteration
+        # Three complete register sets for 3-way rotation
+        # This allows overlapping finish_late(K-1) during hash(K) while prepping K+1
         def alloc_batch_regs(prefix):
             return {
                 'v_idx_a': self.alloc_scratch(f"{prefix}_v_idx_a", VLEN),
@@ -165,8 +166,9 @@ class KernelBuilder:
                 'addr_b': [self.alloc_scratch(f"{prefix}_addr_b_{i}") for i in range(VLEN)],
             }
 
-        regs_E = alloc_batch_regs("E")  # Even iterations
-        regs_O = alloc_batch_regs("O")  # Odd iterations
+        regs_0 = alloc_batch_regs("R0")  # Iterations 0, 3, 6, ...
+        regs_1 = alloc_batch_regs("R1")  # Iterations 1, 4, 7, ...
+        regs_2 = alloc_batch_regs("R2")  # Iterations 2, 5, 8, ...
 
         v_zero = self.alloc_scratch("v_zero", VLEN)
         v_one = self.alloc_scratch("v_one", VLEN)
@@ -234,79 +236,6 @@ class KernelBuilder:
             # XOR
             self.instrs.append({"valu": [("^", r['v_val_a'], r['v_val_a'], r['v_node_a']), ("^", r['v_val_b'], r['v_val_b'], r['v_node_b'])]})
 
-        def emit_hash_with_prep(r_cur, r_nxt, off_a, off_b):
-            """Emit hash for current batch while preparing next batch.
-
-            Pipeline schedule during 16 hash cycles:
-            - Cycle 0: addr comp for next (ALU)
-            - Cycles 2-3: vloads for next (LOAD)
-            - Cycle 4: tree addr for next (VALU - uses 2 free slots)
-            - Cycles 5-6: extract for next (ALU)
-            - Cycles 7-14: scattered loads for next (LOAD)
-            """
-            const_a = self.scratch_const(off_a)
-            const_b = self.scratch_const(off_b)
-
-            for hi, (op1, val1, op2, op3, val3) in enumerate(HASH_STAGES):
-                const1_vec, const3_vec = hash_const_vecs[hi]
-                cycle_num = hi * 2  # 0, 2, 4, 6, 8, 10, 12, 14
-
-                # Cycle A: op1 + op3 for hash (4 VALU slots)
-                instr_a = {"valu": [
-                    (op1, r_cur['v_htmp1_a'], r_cur['v_val_a'], const1_vec),
-                    (op3, r_cur['v_htmp2_a'], r_cur['v_val_a'], const3_vec),
-                    (op1, r_cur['v_htmp1_b'], r_cur['v_val_b'], const1_vec),
-                    (op3, r_cur['v_htmp2_b'], r_cur['v_val_b'], const3_vec),
-                ]}
-
-                # Cycle B: op2 for hash (2 VALU slots)
-                instr_b = {"valu": [
-                    (op2, r_cur['v_val_a'], r_cur['v_htmp1_a'], r_cur['v_htmp2_a']),
-                    (op2, r_cur['v_val_b'], r_cur['v_htmp1_b'], r_cur['v_htmp2_b']),
-                ]}
-
-                # Add pipelined prep operations
-                if cycle_num == 0:
-                    # Address computation for next batch
-                    instr_a["alu"] = [
-                        ("+", r_nxt['idx_base_a'], self.scratch["inp_indices_p"], const_a),
-                        ("+", r_nxt['val_base_a'], self.scratch["inp_values_p"], const_a),
-                        ("+", r_nxt['idx_base_b'], self.scratch["inp_indices_p"], const_b),
-                        ("+", r_nxt['val_base_b'], self.scratch["inp_values_p"], const_b),
-                    ]
-                elif cycle_num == 2:
-                    # vloads for next batch
-                    instr_a["load"] = [("vload", r_nxt['v_idx_a'], r_nxt['idx_base_a']), ("vload", r_nxt['v_val_a'], r_nxt['val_base_a'])]
-                    instr_b["load"] = [("vload", r_nxt['v_idx_b'], r_nxt['idx_base_b']), ("vload", r_nxt['v_val_b'], r_nxt['val_base_b'])]
-                elif cycle_num == 4:
-                    # Tree addresses for next batch (2 free VALU slots)
-                    instr_a["valu"].extend([
-                        ("+", r_nxt['v_taddr_a'], v_forest_p, r_nxt['v_idx_a']),
-                        ("+", r_nxt['v_taddr_b'], v_forest_p, r_nxt['v_idx_b']),
-                    ])
-                    # Start extract in cycle B
-                    instr_b["alu"] = [("+", r_nxt['addr_a'][i], r_nxt['v_taddr_a'] + i, zero_const) for i in range(VLEN)] + \
-                                     [("+", r_nxt['addr_b'][i], r_nxt['v_taddr_b'] + i, zero_const) for i in range(4)]
-                elif cycle_num == 6:
-                    # Finish extract
-                    instr_a["alu"] = [("+", r_nxt['addr_b'][i], r_nxt['v_taddr_b'] + i, zero_const) for i in range(4, VLEN)]
-                    # Start scattered loads
-                    instr_b["load"] = [("load", r_nxt['v_node_a'], r_nxt['addr_a'][0]), ("load", r_nxt['v_node_a'] + 1, r_nxt['addr_a'][1])]
-                elif cycle_num == 8:
-                    instr_a["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['addr_a'][2]), ("load", r_nxt['v_node_a'] + 3, r_nxt['addr_a'][3])]
-                    instr_b["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['addr_a'][4]), ("load", r_nxt['v_node_a'] + 5, r_nxt['addr_a'][5])]
-                elif cycle_num == 10:
-                    instr_a["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['addr_a'][6]), ("load", r_nxt['v_node_a'] + 7, r_nxt['addr_a'][7])]
-                    instr_b["load"] = [("load", r_nxt['v_node_b'], r_nxt['addr_b'][0]), ("load", r_nxt['v_node_b'] + 1, r_nxt['addr_b'][1])]
-                elif cycle_num == 12:
-                    instr_a["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['addr_b'][2]), ("load", r_nxt['v_node_b'] + 3, r_nxt['addr_b'][3])]
-                    instr_b["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['addr_b'][4]), ("load", r_nxt['v_node_b'] + 5, r_nxt['addr_b'][5])]
-                elif cycle_num == 14:
-                    instr_a["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['addr_b'][6]), ("load", r_nxt['v_node_b'] + 7, r_nxt['addr_b'][7])]
-
-                self.instrs.append(instr_a)
-                self.instrs.append(instr_b)
-
         def emit_hash_only(r):
             """Emit hash without pipelining (for last iteration)."""
             for hi, (op1, val1, op2, op3, val3) in enumerate(HASH_STAGES):
@@ -322,14 +251,14 @@ class KernelBuilder:
                     (op2, r['v_val_b'], r['v_htmp1_b'], r['v_htmp2_b']),
                 ]})
 
-        def emit_finish_with_loads(r, r_nxt, has_next):
-            """Emit index computation, bounds check, and stores, overlapping remaining scattered loads.
+        def emit_finish_early(r, r_nxt, has_next):
+            """Emit finish cycles 1-2: index prep and XOR.
 
-            v_node_a[0:8] and v_node_b[0:6] loaded during hash cycles 5-11 using v_taddr directly.
-            Only v_node_b[6:8] loads here (1 cycle).
-            XOR moved to cycle 2 (all v_node ready after cycle 1 loads).
+            These must happen before next hash starts.
+            Cycle 1: VALU (4 slots) + LOAD (2 slots for remaining v_node_b[6:8])
+            Cycle 2: VALU (2 slots for +) + VALU (2 slots for XOR)
             """
-            # Cycle 1: VALU (4 slots) + LOAD (2 slots for v_node_b[6:8])
+            # Cycle 1: index prep (VALU 4 slots) + remaining scattered loads
             instr1 = {"valu": [
                 ("&", r['v_htmp1_a'], r['v_val_a'], v_one), ("&", r['v_htmp1_b'], r['v_val_b'], v_one),
                 ("multiply_add", r['v_idx_a'], r['v_idx_a'], v_two, v_one),
@@ -339,12 +268,17 @@ class KernelBuilder:
                 instr1["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['v_taddr_b'] + 6), ("load", r_nxt['v_node_b'] + 7, r_nxt['v_taddr_b'] + 7)]
             self.instrs.append(instr1)
 
-            # Cycle 2: VALU (2 slots for +) + VALU (2 slots for XOR - v_node fully loaded after cycle 1)
+            # Cycle 2: + for index (VALU 2 slots) + XOR for next batch (VALU 2 slots)
             instr2 = {"valu": [("+", r['v_idx_a'], r['v_idx_a'], r['v_htmp1_a']), ("+", r['v_idx_b'], r['v_idx_b'], r['v_htmp1_b'])]}
             if has_next:
                 instr2["valu"].extend([("^", r_nxt['v_val_a'], r_nxt['v_val_a'], r_nxt['v_node_a']), ("^", r_nxt['v_val_b'], r_nxt['v_val_b'], r_nxt['v_node_b'])])
             self.instrs.append(instr2)
 
+        def emit_finish_late(r):
+            """Emit finish cycles 3-5: bounds check and stores.
+
+            These can be overlapped with next hash.
+            """
             # Cycle 3: VALU (2 slots for <)
             self.instrs.append({"valu": [("<", r['v_htmp1_a'], r['v_idx_a'], v_n_nodes), ("<", r['v_htmp1_b'], r['v_idx_b'], v_n_nodes)]})
 
@@ -360,9 +294,10 @@ class KernelBuilder:
             # Cycle 5: STORE (2 slots for v_idx)
             self.instrs.append({"store": [("vstore", r['idx_base_a'], r['v_idx_a']), ("vstore", r['idx_base_b'], r['v_idx_b'])]})
 
-        def emit_xor(r):
-            """Emit XOR for a batch after scattered loads complete."""
-            self.instrs.append({"valu": [("^", r['v_val_a'], r['v_val_a'], r['v_node_a']), ("^", r['v_val_b'], r['v_val_b'], r['v_node_b'])]})
+        def emit_finish_with_loads(r, r_nxt, has_next):
+            """Emit full finish (cycles 1-5)."""
+            emit_finish_early(r, r_nxt, has_next)
+            emit_finish_late(r)
 
         def emit_hash_with_full_prep(r_cur, r_nxt, off_a, off_b):
             """Emit hash while preparing next batch.
@@ -430,28 +365,137 @@ class KernelBuilder:
                 self.instrs.append(instr_a)
                 self.instrs.append(instr_b)
 
-        # Main loop with full pipelining
+        def emit_hash_with_finish_overlap(r_cur, r_nxt, r_prev, off_a, off_b, do_prep, do_finish_late):
+            """Hash current batch with overlapped prep and finish_late.
+
+            Schedule:
+            - Cycles 0-6: hash + prep (same as emit_hash_with_full_prep)
+            - Cycle 7 (B): hash + scattered loads + finish_late < for prev
+            - Cycle 9 (B): hash + scattered loads + finish_late multiply_add + vstore for prev
+            - Cycle 11 (B): hash + scattered loads + finish_late vstore for prev
+            """
+            const_a = self.scratch_const(off_a) if do_prep else None
+            const_b = self.scratch_const(off_b) if do_prep else None
+
+            for hi, (op1, val1, op2, op3, val3) in enumerate(HASH_STAGES):
+                const1_vec, const3_vec = hash_const_vecs[hi]
+                cycle_num = hi * 2
+
+                instr_a = {"valu": [
+                    (op1, r_cur['v_htmp1_a'], r_cur['v_val_a'], const1_vec),
+                    (op3, r_cur['v_htmp2_a'], r_cur['v_val_a'], const3_vec),
+                    (op1, r_cur['v_htmp1_b'], r_cur['v_val_b'], const1_vec),
+                    (op3, r_cur['v_htmp2_b'], r_cur['v_val_b'], const3_vec),
+                ]}
+
+                instr_b = {"valu": [
+                    (op2, r_cur['v_val_a'], r_cur['v_htmp1_a'], r_cur['v_htmp2_a']),
+                    (op2, r_cur['v_val_b'], r_cur['v_htmp1_b'], r_cur['v_htmp2_b']),
+                ]}
+
+                # Prep operations (same schedule as emit_hash_with_full_prep)
+                if do_prep:
+                    if cycle_num == 0:
+                        instr_a["alu"] = [
+                            ("+", r_nxt['idx_base_a'], self.scratch["inp_indices_p"], const_a),
+                            ("+", r_nxt['val_base_a'], self.scratch["inp_values_p"], const_a),
+                            ("+", r_nxt['idx_base_b'], self.scratch["inp_indices_p"], const_b),
+                            ("+", r_nxt['val_base_b'], self.scratch["inp_values_p"], const_b),
+                        ]
+                    elif cycle_num == 2:
+                        instr_a["load"] = [("vload", r_nxt['v_idx_a'], r_nxt['idx_base_a']), ("vload", r_nxt['v_val_a'], r_nxt['val_base_a'])]
+                        instr_b["load"] = [("vload", r_nxt['v_idx_b'], r_nxt['idx_base_b']), ("vload", r_nxt['v_val_b'], r_nxt['val_base_b'])]
+                    elif cycle_num == 4:
+                        instr_a["valu"].extend([
+                            ("+", r_nxt['v_taddr_a'], v_forest_p, r_nxt['v_idx_a']),
+                            ("+", r_nxt['v_taddr_b'], v_forest_p, r_nxt['v_idx_b']),
+                        ])
+                        instr_b["load"] = [("load", r_nxt['v_node_a'], r_nxt['v_taddr_a']), ("load", r_nxt['v_node_a'] + 1, r_nxt['v_taddr_a'] + 1)]
+                    elif cycle_num == 6:
+                        instr_a["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['v_taddr_a'] + 2), ("load", r_nxt['v_node_a'] + 3, r_nxt['v_taddr_a'] + 3)]
+                        instr_b["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['v_taddr_a'] + 4), ("load", r_nxt['v_node_a'] + 5, r_nxt['v_taddr_a'] + 5)]
+                    elif cycle_num == 8:
+                        instr_a["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['v_taddr_a'] + 6), ("load", r_nxt['v_node_a'] + 7, r_nxt['v_taddr_a'] + 7)]
+                        instr_b["load"] = [("load", r_nxt['v_node_b'], r_nxt['v_taddr_b']), ("load", r_nxt['v_node_b'] + 1, r_nxt['v_taddr_b'] + 1)]
+                    elif cycle_num == 10:
+                        instr_a["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['v_taddr_b'] + 2), ("load", r_nxt['v_node_b'] + 3, r_nxt['v_taddr_b'] + 3)]
+                        instr_b["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['v_taddr_b'] + 4), ("load", r_nxt['v_node_b'] + 5, r_nxt['v_taddr_b'] + 5)]
+
+                # finish_late operations overlapped in hash B cycles
+                if do_finish_late:
+                    if cycle_num == 6:
+                        # finish_late cycle 3: < comparison (VALU 2 slots, using B cycle)
+                        instr_b["valu"].extend([
+                            ("<", r_prev['v_htmp1_a'], r_prev['v_idx_a'], v_n_nodes),
+                            ("<", r_prev['v_htmp1_b'], r_prev['v_idx_b'], v_n_nodes),
+                        ])
+                    elif cycle_num == 8:
+                        # finish_late cycle 4: multiply_add + vstore (VALU 2 slots + STORE 2 slots)
+                        instr_b["valu"].extend([
+                            ("multiply_add", r_prev['v_idx_a'], r_prev['v_idx_a'], r_prev['v_htmp1_a'], v_zero),
+                            ("multiply_add", r_prev['v_idx_b'], r_prev['v_idx_b'], r_prev['v_htmp1_b'], v_zero),
+                        ])
+                        instr_b["store"] = [
+                            ("vstore", r_prev['val_base_a'], r_prev['v_val_a']),
+                            ("vstore", r_prev['val_base_b'], r_prev['v_val_b']),
+                        ]
+                    elif cycle_num == 10:
+                        # finish_late cycle 5: vstore (STORE 2 slots)
+                        instr_b["store"] = [
+                            ("vstore", r_prev['idx_base_a'], r_prev['v_idx_a']),
+                            ("vstore", r_prev['idx_base_b'], r_prev['v_idx_b']),
+                        ]
+
+                self.instrs.append(instr_a)
+                self.instrs.append(instr_b)
+
+        def get_regs_3way(iter_idx):
+            """Get (r_cur, r_nxt, r_prev) for 3-way rotation."""
+            mod = iter_idx % 3
+            if mod == 0:
+                return regs_0, regs_1, regs_2
+            elif mod == 1:
+                return regs_1, regs_2, regs_0
+            else:
+                return regs_2, regs_0, regs_1
+
+        # Main loop with 3-way rotation for finish-hash overlap
+        # Timeline:
+        # - iter 0: full setup + hash + full finish (no overlap)
+        # - iter 1: hash + finish_early only (iter 0 did its own finish_late, iter 1's will overlap with iter 2)
+        # - iter 2 to N-2: hash (finish_late for iter-1) + finish_early
+        # - iter N-1: hash (finish_late for iter-2) + full finish
         for iter_idx in range(total_iterations):
             off_a, off_b = batch_offsets[iter_idx]
-            is_even = (iter_idx % 2 == 0)
-            r_cur = regs_E if is_even else regs_O
-            r_nxt = regs_O if is_even else regs_E
+            r_cur, r_nxt, r_prev = get_regs_3way(iter_idx)
             has_next = iter_idx < total_iterations - 1
 
             if iter_idx == 0:
-                # Prologue: full setup for first iteration
+                # First iteration: full setup + hash + full finish
                 emit_setup(r_cur, off_a, off_b)
-
-            if has_next:
-                next_off_a, next_off_b = batch_offsets[iter_idx + 1]
-                # Hash current batch while fully preparing next batch
-                emit_hash_with_full_prep(r_cur, r_nxt, next_off_a, next_off_b)
+                if has_next:
+                    next_off_a, next_off_b = batch_offsets[iter_idx + 1]
+                    emit_hash_with_full_prep(r_cur, r_nxt, next_off_a, next_off_b)
+                else:
+                    emit_hash_only(r_cur)
+                emit_finish_with_loads(r_cur, r_nxt, has_next)
+            elif iter_idx == 1:
+                # Second iteration: hash + finish_early only (no finish_late to overlap, iter 0 did its own)
+                if has_next:
+                    next_off_a, next_off_b = batch_offsets[iter_idx + 1]
+                    emit_hash_with_finish_overlap(r_cur, r_nxt, r_prev, next_off_a, next_off_b, do_prep=True, do_finish_late=False)
+                else:
+                    emit_hash_only(r_cur)
+                emit_finish_early(r_cur, r_nxt, has_next)
+            elif iter_idx == total_iterations - 1:
+                # Last iteration: hash (with finish_late for iter-1) + full finish
+                emit_hash_with_finish_overlap(r_cur, r_nxt, r_prev, 0, 0, do_prep=False, do_finish_late=True)
+                emit_finish_with_loads(r_cur, r_nxt, has_next=False)
             else:
-                # Last iteration: just hash
-                emit_hash_only(r_cur)
-
-            # Finish current batch (v_node_a loaded during hash, v_node_b + XOR during finish)
-            emit_finish_with_loads(r_cur, r_nxt, has_next)
+                # Middle iterations: hash (with finish_late for iter-1) + finish_early
+                next_off_a, next_off_b = batch_offsets[iter_idx + 1]
+                emit_hash_with_finish_overlap(r_cur, r_nxt, r_prev, next_off_a, next_off_b, do_prep=True, do_finish_late=True)
+                emit_finish_early(r_cur, r_nxt, has_next)
 
         self.instrs.append({"flow": [("pause",)]})
 

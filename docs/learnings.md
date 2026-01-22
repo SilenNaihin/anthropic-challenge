@@ -50,6 +50,8 @@ Document insights, gotchas, and what worked vs didn't.
 - **Arithmetic instead of select**: `2*idx + (1 if even else 2)` → `2*idx + 1 + (val&1)`
 - **Pre-computing constants**: Hash constant vectors outside loop saves broadcasts
 - **Bounds check via multiply**: `vselect(idx, mask, idx, zero)` → `multiply_add(idx, idx, mask, zero)` (VALU instead of FLOW)
+- **3-way register rotation**: Allows overlapping finish_late(K-1) with hash(K) while prepping K+1
+- **Split finish into early/late**: finish_early (index prep + XOR) must happen before next hash, finish_late (bounds + stores) can overlap
 
 ## What Doesn't Work
 
@@ -84,7 +86,18 @@ Tree address computation (2 VALU ops) can run DURING hash cycles using the 2 fre
 - Careful tracking of which register holds what state
 - Easy to accidentally share registers between unrelated values
 
-### Current Bottleneck Analysis (4,436 cycles)
+### Current Bottleneck Analysis (3,674 cycles)
+Per iteration at 3,674 cycles / 256 iterations = 14.3 cycles:
+- Hash (with overlapped prep + finish_late): 12 cycles
+  - Overlaps: addr comp, vloads, tree addr for next batch
+  - Cycles 5-11: scattered loads (14 loads)
+  - B cycles 7, 9, 11: finish_late operations for prev batch
+- Finish_early (can't overlap): 2 cycles
+  - Cycle 1: remaining 2 loads + index prep
+  - Cycle 2: + for index + XOR for next
+Total: 14 cycles per iteration (close to measured 14.3)
+
+### Previous Bottleneck Analysis (4,436 cycles)
 Per iteration at 4,436 cycles / 256 iterations = 17.3 cycles:
 - Hash (with overlapped prep + v_node_a loads): 12 cycles
   - Overlaps: addr comp, vloads, tree addr, extract for next batch
@@ -102,6 +115,8 @@ Attempted to move all 16 scattered loads into hash cycles 7-15 (9 cycles availab
 - Hypothesis: Timing issue at round boundaries or register dependency bug
 
 ### Remaining Optimization Opportunities
-1. **Finish-hash overlap**: Move XOR to end of hash (cycle 11), then overlap finish VALU ops with next hash B cycles. Theory: 12 cycles/iteration instead of 17 = ~3,100 cycles.
-2. **Triple-batch processing**: Use all 6 VALU slots during hash instead of 4. Would lose tree addr pipelining.
-3. **Earlier addr computation**: Compute addr K+1 at end of hash K to enable vloads at start of hash K+1.
+1. ~~**Finish-hash overlap**: Move XOR to end of hash (cycle 11), then overlap finish VALU ops with next hash B cycles. Theory: 12 cycles/iteration instead of 17 = ~3,100 cycles.~~ **DONE** - achieved 3,674 cycles (14 cycles/iter)
+2. **Triple-batch processing**: Use all 6 VALU slots during hash instead of 4. Would need different pipeline structure.
+3. **Overlap finish_early**: The remaining 2 finish_early cycles might be overlapable with hash A cycles (which have 2 free VALU slots).
+4. **Reduce scattered loads**: If some tree lookups could be done with vector gather, might save cycles.
+5. **Target**: 2,164 cycles (12 cycles/iter) - need to eliminate 2 more cycles per iteration.
