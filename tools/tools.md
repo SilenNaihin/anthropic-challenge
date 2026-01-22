@@ -10,8 +10,9 @@ Reference documentation for all analysis and optimization tools.
 | [VLIW Auto-Packer](#vliw-auto-packer) | **Completed** | `tools/vliw_packer/` | P0 |
 | [Dependency Graph](#dependency-graph) | **Completed** | `tools/dependency_graph/` | P0 |
 | [Hash Pipeline](#hash-pipeline) | **Completed** | `tools/hash_pipeline/` | P1 |
-| Cycle Profiler | Not Started | - | P1 |
-| Memory Analyzer | Not Started | - | P1 |
+| [Cycle Profiler](#cycle-profiler) | **Completed** | `tools/cycle_profiler/` | P1 |
+| [Memory Analyzer](#memory-analyzer) | **Completed** | `tools/memory_analyzer/` | P1 |
+| [Constraint Validator](#constraint-validator) | **Completed** | `tools/constraint_validator/` | P2 |
 
 See `tools/prd.json` for full tracking.
 
@@ -146,6 +147,96 @@ Per-Batch Breakdown (8 elements via VLEN):
 ### Documentation
 - Full docs: `tools/hash_pipeline/README.md`
 - Quick ref: `tools/hash_pipeline/quickstart.md`
+
+---
+
+## Cycle Profiler
+
+**Status**: Completed | **Folder**: `tools/cycle_profiler/`
+
+Breaks down cycles by code section (hash, memory, index calc) to understand WHERE time is spent.
+
+### Quick Usage
+```bash
+# Basic profiling
+python tools/cycle_profiler/cycle_profiler.py
+
+# Full analysis with all features
+python tools/cycle_profiler/cycle_profiler.py --all
+
+# JSON output
+python tools/cycle_profiler/cycle_profiler.py --json
+```
+
+### Features
+- Phase tagging (hash, memory_load, memory_store, index_calc, bounds_check, xor_mix, broadcast, flow)
+- Per-round breakdown (cycle distribution across rounds)
+- Hotspot identification (phases ranked by cycle count)
+- Exclusive cycle tracking (cycles where only one phase runs)
+- Optimization recommendations based on profile
+- Rich colored output
+
+### Key Output
+```
+HOTSPOTS (phases by cycle count)
+--------------------------------
+Phase                Cycles   % of Total   Exclusive
+hash                    512       64.6%       45.2%
+memory_load             234       29.5%       12.3%
+index_calc              156       19.7%        8.1%
+```
+
+### Optimization Guidance
+- hash > 50%? -> Focus on hash pipelining (use hash_pipeline tool)
+- load > 30%? -> Consider prefetching or overlapping with compute
+- index > 20%? -> Pre-compute addresses, use strength reduction
+
+### Documentation
+- Full docs: `tools/cycle_profiler/README.md`
+- Quick ref: `tools/cycle_profiler/quickstart.md`
+
+---
+
+## Constraint Validator
+
+**Status**: Completed | **Folder**: `tools/constraint_validator/`
+
+Static constraint checking for VLIW SIMD kernels. Catches errors before slow runtime failures.
+
+### Quick Usage
+```bash
+# Validate current kernel
+python tools/constraint_validator/constraint_validator.py
+
+# JSON output
+python tools/constraint_validator/constraint_validator.py --json
+
+# Strict mode (fail on warnings)
+python tools/constraint_validator/constraint_validator.py --strict
+```
+
+### Features
+- Slot limit validation (12 alu, 6 valu, 2 load, 2 store, 1 flow)
+- Scratch memory overflow detection
+- Same-cycle RAW hazard detection
+- Register usage validation (uninitialized reads)
+- Rich colored output
+- JSON output for scripting
+- Strict mode for CI/CD integration
+
+### What It Catches
+| Check | Error Type |
+|-------|------------|
+| Slot limits exceeded | ERROR |
+| Scratch address >= 1536 | ERROR |
+| Negative scratch address | ERROR |
+| Same-cycle RAW hazard | WARNING |
+| Scratch usage > 90% | WARNING |
+| Uninitialized reads | WARNING |
+
+### Documentation
+- Full docs: `tools/constraint_validator/README.md`
+- Quick ref: `tools/constraint_validator/quickstart.md`
 
 ---
 

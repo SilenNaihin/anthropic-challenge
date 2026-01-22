@@ -71,30 +71,40 @@
     {
       "id": "cycle_profiler",
       "name": "Cycle Profiler",
-      "file": "cycle_profiler.py",
-      "status": "not_started",
+      "file": "cycle_profiler/cycle_profiler.py",
+      "status": "completed",
       "priority": "P1",
       "description": "Break down cycles by code section (hash, memory, index calc)",
       "features": {
-        "phase_tagging": false,
-        "per_round_breakdown": false,
-        "hotspot_identification": false
+        "phase_tagging": true,
+        "per_round_breakdown": true,
+        "hotspot_identification": true,
+        "rich_output": true,
+        "json_output": true,
+        "optimization_recommendations": true,
+        "exclusive_cycle_tracking": true
       },
+      "usage": "python tools/cycle_profiler/cycle_profiler.py [--all] [--detailed] [--per-round] [--recommendations] [--json]",
       "value": "Know WHERE cycles are spent, not just how many"
     },
     {
       "id": "memory_analyzer",
       "name": "Memory Access Pattern Analyzer",
-      "file": "memory_analyzer.py",
-      "status": "not_started",
+      "file": "memory_analyzer/memory_analyzer.py",
+      "status": "completed",
       "priority": "P1",
       "description": "Analyze load/store patterns for vectorization opportunities",
       "features": {
-        "access_pattern_detection": false,
-        "stride_analysis": false,
-        "vectorization_blockers": false
+        "access_pattern_detection": true,
+        "stride_analysis": true,
+        "vectorization_blockers": true,
+        "address_source_tracking": true,
+        "rich_output": true,
+        "json_output": true,
+        "recommendations": true
       },
-      "value": "Reveals why vload/vstore can't be used"
+      "usage": "python tools/memory_analyzer/memory_analyzer.py [--json] [--verbose] [--no-color]",
+      "value": "Reveals why vload/vstore can't be used (tree lookups = scattered addresses)"
     },
     {
       "id": "hash_pipeline",
@@ -126,15 +136,20 @@
     {
       "id": "constraint_validator",
       "name": "Constraint Validator",
-      "file": "constraint_validator.py",
-      "status": "not_started",
+      "file": "constraint_validator/constraint_validator.py",
+      "status": "completed",
       "priority": "P2",
       "description": "Static checking of kernel before runtime",
       "features": {
-        "slot_limit_check": false,
-        "scratch_overflow_check": false,
-        "same_cycle_hazard_check": false
+        "slot_limit_check": true,
+        "scratch_overflow_check": true,
+        "same_cycle_hazard_check": true,
+        "register_usage_validation": true,
+        "rich_output": true,
+        "json_output": true,
+        "strict_mode": true
       },
+      "usage": "python tools/constraint_validator/constraint_validator.py [--json] [--strict] [--kernel FILE]",
       "value": "Catch errors before slow runtime failures"
     },
     {
