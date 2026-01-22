@@ -49,6 +49,7 @@ Document insights, gotchas, and what worked vs didn't.
 - **Multi-engine packing**: Combine flow+store, valu+alu in same cycle
 - **Arithmetic instead of select**: `2*idx + (1 if even else 2)` → `2*idx + 1 + (val&1)`
 - **Pre-computing constants**: Hash constant vectors outside loop saves broadcasts
+- **Bounds check via multiply**: `vselect(idx, mask, idx, zero)` → `multiply_add(idx, idx, mask, zero)` (VALU instead of FLOW)
 
 ## What Doesn't Work
 
@@ -83,15 +84,15 @@ Tree address computation (2 VALU ops) can run DURING hash cycles using the 2 fre
 - Careful tracking of which register holds what state
 - Easy to accidentally share registers between unrelated values
 
-### Current Bottleneck Analysis (4,692 cycles)
-Per iteration at 4,692 cycles / 256 iterations = 18.3 cycles:
-- Hash (with overlapped prep + v_node_a loads): 16 cycles
+### Current Bottleneck Analysis (4,436 cycles)
+Per iteration at 4,436 cycles / 256 iterations = 17.3 cycles:
+- Hash (with overlapped prep + v_node_a loads): 12 cycles
   - Overlaps: addr comp, vloads, tree addr, extract for next batch
   - Cycles 8-11: v_node_a scattered loads (8 loads)
-- Finish (with v_node_b loads + XOR): 6 cycles
+- Finish (with v_node_b loads + XOR): 5 cycles
   - Cycles 1-4: v_node_b scattered loads (8 loads)
-  - Cycle 6: XOR for next batch (combined with last store)
-Total counted: 22 cycles per iteration (18.3 actual = ~4 cycles pipelining overlap)
+  - Cycle 5: Stores + XOR for next batch
+Total: 17 cycles per iteration (close to measured 17.3)
 
 ### What Didn't Work: Scattered Loads During Hash
 Attempted to move all 16 scattered loads into hash cycles 7-15 (9 cycles available). Theory was sound:

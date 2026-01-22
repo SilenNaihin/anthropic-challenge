@@ -14,6 +14,27 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Replace vselect with multiply_add for bounds check
+
+**Hypothesis**: The bounds check `idx < n_nodes ? idx : 0` uses vselect (FLOW engine, 1 slot). We can replace it with `idx * (idx < n_nodes)` using multiply_add (VALU engine, 6 slots). This eliminates the 2 FLOW operations that forced sequential execution.
+
+**Change**: Replaced the two vselect operations with multiply_add:
+- Old: `vselect(idx, mask, idx, zero)` using FLOW engine (1 slot)
+- New: `multiply_add(idx, idx, mask, zero)` using VALU engine
+- Reduced finish phase from 6 cycles to 5 cycles
+
+**Result**: 4,692 → 4,436 cycles (33.30x speedup)
+
+**Analysis**:
+- Saved 256 cycles (1 cycle per iteration × 256 iterations)
+- Both vselects now execute in parallel in cycle 4 instead of cycles 4 and 5
+- Stores for v_idx_a and v_idx_b moved to cycle 5 together
+- XOR for next batch remains in cycle 5
+
+**Verdict**: Keep - eliminates flow engine bottleneck.
+
+---
+
 ## [2025-01-22] - Combine XOR with last finish cycle
 
 **Hypothesis**: XOR uses 2 VALU ops. Last finish cycle (cycle 6) only has 1 STORE op and VALU is free. Can combine them.

@@ -326,6 +326,8 @@ class KernelBuilder:
             """Emit index computation, bounds check, and stores, overlapping scattered loads for next.
 
             Note: v_node_a is loaded during hash cycles 8-11. Only v_node_b loads here.
+            Optimization: Use multiply_add for bounds check instead of vselect (VALU vs FLOW).
+            idx = idx * (idx < n_nodes) instead of vselect(idx, mask, idx, zero)
             """
             # Cycle 1: VALU (4 slots) + LOAD (2 slots for v_node_b[0:2])
             instr1 = {"valu": [
@@ -343,32 +345,30 @@ class KernelBuilder:
                 instr2["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['addr_b'][2]), ("load", r_nxt['v_node_b'] + 3, r_nxt['addr_b'][3])]
             self.instrs.append(instr2)
 
-            # Cycle 3: VALU (2 slots) + LOAD (2 slots)
+            # Cycle 3: VALU (2 slots for <) + LOAD (2 slots)
             instr3 = {"valu": [("<", r['v_htmp1_a'], r['v_idx_a'], v_n_nodes), ("<", r['v_htmp1_b'], r['v_idx_b'], v_n_nodes)]}
             if has_next:
                 instr3["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['addr_b'][4]), ("load", r_nxt['v_node_b'] + 5, r_nxt['addr_b'][5])]
             self.instrs.append(instr3)
 
-            # Cycle 4: FLOW (1 slot) + STORE (2 slots) + LOAD (2 slots)
+            # Cycle 4: VALU (2 slots for bounds via multiply_add) + STORE (2 slots) + LOAD (2 slots)
+            # idx = idx * mask = multiply_add(idx, mask, v_zero)
             instr4 = {
-                "flow": [("vselect", r['v_idx_a'], r['v_htmp1_a'], r['v_idx_a'], v_zero)],
+                "valu": [
+                    ("multiply_add", r['v_idx_a'], r['v_idx_a'], r['v_htmp1_a'], v_zero),
+                    ("multiply_add", r['v_idx_b'], r['v_idx_b'], r['v_htmp1_b'], v_zero),
+                ],
                 "store": [("vstore", r['val_base_a'], r['v_val_a']), ("vstore", r['val_base_b'], r['v_val_b'])],
             }
             if has_next:
                 instr4["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['addr_b'][6]), ("load", r_nxt['v_node_b'] + 7, r_nxt['addr_b'][7])]
             self.instrs.append(instr4)
 
-            # Cycle 5: FLOW (1 slot) + STORE (1 slot)
-            self.instrs.append({
-                "flow": [("vselect", r['v_idx_b'], r['v_htmp1_b'], r['v_idx_b'], v_zero)],
-                "store": [("vstore", r['idx_base_a'], r['v_idx_a'])],
-            })
-
-            # Cycle 6: STORE (1 slot) + VALU (2 slots for XOR of next batch)
-            instr6 = {"store": [("vstore", r['idx_base_b'], r['v_idx_b'])]}
+            # Cycle 5: STORE (2 slots) + VALU (2 slots for XOR of next batch)
+            instr5 = {"store": [("vstore", r['idx_base_a'], r['v_idx_a']), ("vstore", r['idx_base_b'], r['v_idx_b'])]}
             if has_next:
-                instr6["valu"] = [("^", r_nxt['v_val_a'], r_nxt['v_val_a'], r_nxt['v_node_a']), ("^", r_nxt['v_val_b'], r_nxt['v_val_b'], r_nxt['v_node_b'])]
-            self.instrs.append(instr6)
+                instr5["valu"] = [("^", r_nxt['v_val_a'], r_nxt['v_val_a'], r_nxt['v_node_a']), ("^", r_nxt['v_val_b'], r_nxt['v_val_b'], r_nxt['v_node_b'])]
+            self.instrs.append(instr5)
 
         def emit_xor(r):
             """Emit XOR for a batch after scattered loads complete."""
