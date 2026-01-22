@@ -1,0 +1,171 @@
+{
+  "project": "VLIW SIMD Optimization Tools",
+  "goal": "Build tools to push cycle count below 1,487 (currently at 8,500)",
+  "current_cycles": 8500,
+  "target_cycles": 1487,
+  "tools": [
+    {
+      "id": "slot_analyzer",
+      "name": "Slot Utilization Analyzer",
+      "file": "slot_analyzer.py",
+      "status": "completed",
+      "priority": "P0",
+      "description": "Analyzes instruction streams for slot utilization and packing opportunities",
+      "features": {
+        "overall_utilization": true,
+        "per_engine_breakdown": true,
+        "histogram": true,
+        "packing_opportunities": true,
+        "packing_by_type": true,
+        "json_output": true,
+        "dependency_analysis": false,
+        "critical_path": false,
+        "recommendations": false,
+        "kernel_diff": false
+      },
+      "usage": "python tools/slot_analyzer.py [--packing] [--json] [--top N]"
+    },
+    {
+      "id": "dependency_graph",
+      "name": "Dependency Graph Builder",
+      "file": "dependency_graph.py",
+      "status": "not_started",
+      "priority": "P0",
+      "description": "Build DAG of instruction dependencies (RAW, WAR, WAW hazards)",
+      "features": {
+        "build_dag": false,
+        "critical_path": false,
+        "parallelism_potential": false,
+        "visualize": false
+      },
+      "value": "Essential for understanding what PREVENTS packing"
+    },
+    {
+      "id": "vliw_packer",
+      "name": "VLIW Auto-Packer",
+      "file": "vliw_packer.py",
+      "status": "not_started",
+      "priority": "P0",
+      "description": "Automatically pack independent instructions into VLIW bundles",
+      "features": {
+        "dependency_aware": false,
+        "respects_slot_limits": false,
+        "topological_scheduling": false,
+        "outputs_packed_kernel": false
+      },
+      "value": "Automates the tedious packing work"
+    },
+    {
+      "id": "cycle_profiler",
+      "name": "Cycle Profiler",
+      "file": "cycle_profiler.py",
+      "status": "not_started",
+      "priority": "P1",
+      "description": "Break down cycles by code section (hash, memory, index calc)",
+      "features": {
+        "phase_tagging": false,
+        "per_round_breakdown": false,
+        "hotspot_identification": false
+      },
+      "value": "Know WHERE cycles are spent, not just how many"
+    },
+    {
+      "id": "memory_analyzer",
+      "name": "Memory Access Pattern Analyzer",
+      "file": "memory_analyzer.py",
+      "status": "not_started",
+      "priority": "P1",
+      "description": "Analyze load/store patterns for vectorization opportunities",
+      "features": {
+        "access_pattern_detection": false,
+        "stride_analysis": false,
+        "vectorization_blockers": false
+      },
+      "value": "Reveals why vload/vstore can't be used"
+    },
+    {
+      "id": "hash_pipeline",
+      "name": "Hash Pipeline Analyzer",
+      "file": "hash_pipeline.py",
+      "status": "not_started",
+      "priority": "P1",
+      "description": "Analyze 6-stage hash function for software pipelining",
+      "features": {
+        "stage_dependency_map": false,
+        "pipeline_schedule": false,
+        "interleaving_plan": false
+      },
+      "value": "Hash is the hottest code - pipelining is critical"
+    },
+    {
+      "id": "constraint_validator",
+      "name": "Constraint Validator",
+      "file": "constraint_validator.py",
+      "status": "not_started",
+      "priority": "P2",
+      "description": "Static checking of kernel before runtime",
+      "features": {
+        "slot_limit_check": false,
+        "scratch_overflow_check": false,
+        "same_cycle_hazard_check": false
+      },
+      "value": "Catch errors before slow runtime failures"
+    },
+    {
+      "id": "transforms",
+      "name": "Transformation Library",
+      "file": "transforms.py",
+      "status": "not_started",
+      "priority": "P2",
+      "description": "Codified transformations: unroll, vectorize, pipeline",
+      "features": {
+        "loop_unroll": false,
+        "vectorize_batch": false,
+        "software_pipeline": false,
+        "hoist_invariants": false
+      },
+      "value": "Reduces manual errors in mechanical transforms"
+    },
+    {
+      "id": "kernel_diff",
+      "name": "Kernel Diff Tool",
+      "file": "kernel_diff.py",
+      "status": "not_started",
+      "priority": "P2",
+      "description": "Compare two kernel versions (cycles, utilization, structure)",
+      "features": {
+        "cycle_comparison": false,
+        "utilization_diff": false,
+        "instruction_diff": false
+      },
+      "value": "Track impact of each optimization"
+    },
+    {
+      "id": "optimization_loop",
+      "name": "Optimization Loop Runner",
+      "file": "optimize.py",
+      "status": "not_started",
+      "priority": "P3",
+      "description": "Meta-tool that runs profile->analyze->transform->validate loop",
+      "features": {
+        "automated_profiling": false,
+        "bottleneck_detection": false,
+        "transform_application": false,
+        "regression_checking": false
+      },
+      "value": "Automates the optimization search process"
+    }
+  ],
+  "libraries_to_install": [
+    {"name": "networkx", "purpose": "Dependency graphs", "installed": false},
+    {"name": "rich", "purpose": "Terminal output", "installed": false},
+    {"name": "ortools", "purpose": "Constraint solving for scheduling", "installed": false}
+  ],
+  "milestones": [
+    {"cycles": 18532, "name": "2-hour starting point", "achieved": true},
+    {"cycles": 8500, "name": "Current position", "achieved": true},
+    {"cycles": 2164, "name": "Opus 4 many hours", "achieved": false},
+    {"cycles": 1790, "name": "Opus 4.5 casual", "achieved": false},
+    {"cycles": 1487, "name": "TARGET: Opus 4.5 11.5hr", "achieved": false}
+  ]
+}
