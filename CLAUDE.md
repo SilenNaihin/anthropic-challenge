@@ -29,6 +29,31 @@ python watch_trace.py
 git diff origin/main tests/
 ```
 
+## Analysis Tools
+
+Located in `tools/` folder. See `tools/prd.json` for status.
+
+```bash
+# Slot utilization analyzer - comprehensive VLIW analysis
+python tools/slot_analyzer.py                    # Basic analysis (with Rich colors)
+python tools/slot_analyzer.py --packing          # Packing opportunities
+python tools/slot_analyzer.py --deps             # Dependency/RAW hazard analysis
+python tools/slot_analyzer.py --recommendations  # Prioritized optimization suggestions
+python tools/slot_analyzer.py --json             # Machine-readable output
+python tools/slot_analyzer.py --no-color         # Plain text output
+
+# Kernel comparison (before/after)
+python tools/slot_analyzer.py --save before.json           # Save current kernel
+# ... make changes ...
+python tools/slot_analyzer.py --compare before.json after.json  # Compare
+
+# Key metrics:
+# - Slot utilization % (overall and per-engine)
+# - Critical path length vs actual cycles
+# - RAW hazards blocking packing
+# - Prioritized recommendations with difficulty ratings
+```
+
 ## Architecture Quick Reference
 
 | Engine | Slots/cycle | Notes |

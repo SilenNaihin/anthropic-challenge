@@ -18,12 +18,20 @@
         "packing_opportunities": true,
         "packing_by_type": true,
         "json_output": true,
-        "dependency_analysis": false,
-        "critical_path": false,
-        "recommendations": false,
-        "kernel_diff": false
+        "dependency_analysis": true,
+        "critical_path": true,
+        "recommendations": true,
+        "kernel_diff": true,
+        "rich_output": true,
+        "save_load_kernels": true
       },
-      "usage": "python tools/slot_analyzer.py [--packing] [--json] [--top N]"
+      "usage": "python tools/slot_analyzer.py [--packing] [--deps] [--recommendations] [--compare k1.json k2.json] [--save file.json]",
+      "future_improvements": [
+        "Full DAG for critical path (currently adjacent-only)",
+        "Hot register detection",
+        "Instruction latency model",
+        "Modularize into separate files"
+      ]
     },
     {
       "id": "dependency_graph",
