@@ -327,7 +327,7 @@ class KernelBuilder:
 
             Note: v_node_a is loaded during hash cycles 8-11. Only v_node_b loads here.
             """
-            # Cycle 1: VALU (4 slots) + LOAD (2 slots for v_node_b)
+            # Cycle 1: VALU (4 slots) + LOAD (2 slots for v_node_b[0:2])
             instr1 = {"valu": [
                 ("&", r['v_htmp1_a'], r['v_val_a'], v_one), ("&", r['v_htmp1_b'], r['v_val_b'], v_one),
                 ("multiply_add", r['v_idx_a'], r['v_idx_a'], v_two, v_one),
