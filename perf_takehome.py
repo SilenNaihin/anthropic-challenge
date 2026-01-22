@@ -325,34 +325,33 @@ class KernelBuilder:
         def emit_finish_with_loads(r, r_nxt, has_next):
             """Emit index computation, bounds check, and stores, overlapping scattered loads for next.
 
-            Note: v_node_a is loaded during hash cycles 8-11. Only v_node_b loads here.
+            Note: v_node_a is loaded during hash cycles 8-11, v_node_b[0:2] during cycle 7.
+            Only v_node_b[2:8] loads here (3 cycles instead of 4).
             Optimization: Use multiply_add for bounds check instead of vselect (VALU vs FLOW).
-            idx = idx * (idx < n_nodes) instead of vselect(idx, mask, idx, zero)
             """
-            # Cycle 1: VALU (4 slots) + LOAD (2 slots for v_node_b[0:2])
+            # Cycle 1: VALU (4 slots) + LOAD (2 slots for v_node_b[2:4])
             instr1 = {"valu": [
                 ("&", r['v_htmp1_a'], r['v_val_a'], v_one), ("&", r['v_htmp1_b'], r['v_val_b'], v_one),
                 ("multiply_add", r['v_idx_a'], r['v_idx_a'], v_two, v_one),
                 ("multiply_add", r['v_idx_b'], r['v_idx_b'], v_two, v_one),
             ]}
             if has_next:
-                instr1["load"] = [("load", r_nxt['v_node_b'], r_nxt['addr_b'][0]), ("load", r_nxt['v_node_b'] + 1, r_nxt['addr_b'][1])]
+                instr1["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['addr_b'][2]), ("load", r_nxt['v_node_b'] + 3, r_nxt['addr_b'][3])]
             self.instrs.append(instr1)
 
-            # Cycle 2: VALU (2 slots) + LOAD (2 slots)
+            # Cycle 2: VALU (2 slots) + LOAD (2 slots for v_node_b[4:6])
             instr2 = {"valu": [("+", r['v_idx_a'], r['v_idx_a'], r['v_htmp1_a']), ("+", r['v_idx_b'], r['v_idx_b'], r['v_htmp1_b'])]}
             if has_next:
-                instr2["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['addr_b'][2]), ("load", r_nxt['v_node_b'] + 3, r_nxt['addr_b'][3])]
+                instr2["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['addr_b'][4]), ("load", r_nxt['v_node_b'] + 5, r_nxt['addr_b'][5])]
             self.instrs.append(instr2)
 
-            # Cycle 3: VALU (2 slots for <) + LOAD (2 slots)
+            # Cycle 3: VALU (2 slots for <) + LOAD (2 slots for v_node_b[6:8])
             instr3 = {"valu": [("<", r['v_htmp1_a'], r['v_idx_a'], v_n_nodes), ("<", r['v_htmp1_b'], r['v_idx_b'], v_n_nodes)]}
             if has_next:
-                instr3["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['addr_b'][4]), ("load", r_nxt['v_node_b'] + 5, r_nxt['addr_b'][5])]
+                instr3["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['addr_b'][6]), ("load", r_nxt['v_node_b'] + 7, r_nxt['addr_b'][7])]
             self.instrs.append(instr3)
 
-            # Cycle 4: VALU (2 slots for bounds via multiply_add) + STORE (2 slots) + LOAD (2 slots)
-            # idx = idx * mask = multiply_add(idx, mask, v_zero)
+            # Cycle 4: VALU (2 slots for bounds via multiply_add) + STORE (2 slots for v_val)
             instr4 = {
                 "valu": [
                     ("multiply_add", r['v_idx_a'], r['v_idx_a'], r['v_htmp1_a'], v_zero),
@@ -360,11 +359,9 @@ class KernelBuilder:
                 ],
                 "store": [("vstore", r['val_base_a'], r['v_val_a']), ("vstore", r['val_base_b'], r['v_val_b'])],
             }
-            if has_next:
-                instr4["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['addr_b'][6]), ("load", r_nxt['v_node_b'] + 7, r_nxt['addr_b'][7])]
             self.instrs.append(instr4)
 
-            # Cycle 5: STORE (2 slots) + VALU (2 slots for XOR of next batch)
+            # Cycle 5: STORE (2 slots for v_idx) + VALU (2 slots for XOR of next batch)
             instr5 = {"store": [("vstore", r['idx_base_a'], r['v_idx_a']), ("vstore", r['idx_base_b'], r['v_idx_b'])]}
             if has_next:
                 instr5["valu"] = [("^", r_nxt['v_val_a'], r_nxt['v_val_a'], r_nxt['v_node_a']), ("^", r_nxt['v_val_b'], r_nxt['v_val_b'], r_nxt['v_node_b'])]
@@ -420,6 +417,8 @@ class KernelBuilder:
                 elif cycle_num == 6:
                     # Cycle 6: extract part 2 (ALU - 4 ops)
                     instr_a["alu"] = [("+", r_nxt['addr_b'][i], r_nxt['v_taddr_b'] + i, zero_const) for i in range(4, VLEN)]
+                    # Cycle 7: v_node_b[0:2] - addr_b ready after cycle 6
+                    instr_b["load"] = [("load", r_nxt['v_node_b'], r_nxt['addr_b'][0]), ("load", r_nxt['v_node_b'] + 1, r_nxt['addr_b'][1])]
                 elif cycle_num == 8:
                     # Scattered loads during hash: v_node_a[0:4]
                     instr_a["load"] = [("load", r_nxt['v_node_a'], r_nxt['addr_a'][0]), ("load", r_nxt['v_node_a'] + 1, r_nxt['addr_a'][1])]
