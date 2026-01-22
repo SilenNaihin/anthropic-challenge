@@ -13,7 +13,9 @@ Reference documentation for all analysis and optimization tools.
 | [Cycle Profiler](#cycle-profiler) | **Completed** | `tools/cycle_profiler/` | P1 |
 | [Memory Analyzer](#memory-analyzer) | **Completed** | `tools/memory_analyzer/` | P1 |
 | [Constraint Validator](#constraint-validator) | **Completed** | `tools/constraint_validator/` | P2 |
+| [Transforms](#transforms) | **Completed** | `tools/transforms/` | P2 |
 | [Kernel Diff](#kernel-diff) | **Completed** | `tools/kernel_diff/` | P2 |
+| [Optimization Loop](#optimization-loop) | **Completed** | `tools/optimization_loop/` | P3 |
 
 See `tools/prd.json` for full tracking.
 
@@ -306,6 +308,73 @@ python tools/constraint_validator/constraint_validator.py --strict
 
 ---
 
+## Transforms
+
+**Status**: Completed | **Folder**: `tools/transforms/`
+
+Codified transformations to reduce manual errors in mechanical transforms for VLIW SIMD optimization.
+
+### Quick Usage
+```bash
+# Analyze kernel for transformation opportunities
+python tools/transforms/transforms.py
+
+# Run demonstration
+python tools/transforms/transforms.py --demo
+
+# JSON output
+python tools/transforms/transforms.py --json
+```
+
+### Features
+- **Loop unrolling** - Replicate loop body N times with automatic register renaming
+- **Vectorize batch** - Convert scalar ops to vector ops (VLEN=8)
+- **Software pipelining** - Overlap iteration N+1 prep with N execution
+- **Hoist invariants** - Move loop-invariant code outside loops
+- Hash-specific helpers (generate vectorized hash stages)
+- Analysis tools for identifying transform opportunities
+- Rich colored output
+- JSON output for scripting
+
+### The Four Transforms
+
+| Transform | Purpose | Typical Speedup |
+|-----------|---------|-----------------|
+| Loop Unroll | Reduce loop overhead, expose ILP | 1.2-2x |
+| Vectorize | VLEN=8 elements per op | Up to 8x |
+| Software Pipeline | Hide latency via overlap | 1.5-2x |
+| Hoist Invariants | Remove redundant computation | 1.1-1.5x |
+
+### Example: Unroll + Pack Workflow
+```python
+from tools.transforms.transforms import unroll_loop, hoist_invariants
+from tools.vliw_packer.vliw_packer import pack_kernel
+
+# 1. Hoist invariants first
+hoist_result = hoist_invariants(loop_body, iterations=16)
+
+# 2. Unroll remaining body
+unroll_result = unroll_loop(hoist_result.transformed_code, unroll_factor=4)
+
+# 3. Pack the result
+packed, stats = pack_kernel(unroll_result.transformed_code)
+print(f"Speedup: {stats.speedup:.2f}x")
+```
+
+### Hash Helper
+```python
+from tools.transforms.transforms import generate_vectorized_hash_stage
+
+# Generates 2-cycle hash stage using tmp1 || tmp2 ILP
+instrs = generate_vectorized_hash_stage(0, val_base, tmp1, tmp2, const1, const3)
+```
+
+### Documentation
+- Full docs: `tools/transforms/README.md`
+- Quick ref: `tools/transforms/quickstart.md`
+
+---
+
 ## Kernel Diff
 
 **Status**: Completed | **Folder**: `tools/kernel_diff/`
@@ -357,6 +426,76 @@ valu             567         890        +323      +12.5%
 ### Documentation
 - Full docs: `tools/kernel_diff/README.md`
 - Quick ref: `tools/kernel_diff/quickstart.md`
+
+---
+
+## Optimization Loop
+
+**Status**: Completed | **Folder**: `tools/optimization_loop/`
+
+Meta-tool that automates the profile->analyze->transform->validate optimization loop. Orchestrates all analysis tools to provide a comprehensive view.
+
+### Quick Usage
+```bash
+# Full optimization loop
+python tools/optimization_loop/optimize.py
+
+# Quick analysis (skip validation)
+python tools/optimization_loop/optimize.py --suggest
+
+# Profile only
+python tools/optimization_loop/optimize.py --profile
+
+# JSON output
+python tools/optimization_loop/optimize.py --json
+```
+
+### Features
+- Automated profiling (runs slot_analyzer, dependency_graph, cycle_profiler)
+- Bottleneck detection (slot utilization, dependencies, memory/hash bound)
+- Transform suggestions (packing, pipelining, vectorization)
+- Regression checking (validates correctness, measures cycles)
+- Rich colored output
+- JSON output for scripting
+- Dry-run mode (preview without running tools)
+
+### Bottleneck Types Detected
+| Type | Description |
+|------|-------------|
+| `slot_utilization` | Low overall slot usage |
+| `dependency_chain` | Long critical path |
+| `memory_bound` | Load/store operations dominate |
+| `hash_bound` | Hash computation dominates |
+| `engine_imbalance` | Some engines saturated, others idle |
+
+### Key Output
+```
+BOTTLENECKS DETECTED (2)
+1. [HIGH] dependency_chain
+   Long dependency chains. 94.7% of cycles could be eliminated.
+
+SUGGESTED TRANSFORMS (3)
+1. P1 [HARD] Break dependency chains
+   Potential: 18.86x theoretical speedup
+
+2. P2 [EASY] Pack more instructions per cycle
+   Potential: Up to 55% cycle reduction
+```
+
+### Typical Workflow
+```bash
+# 1. Get suggestions
+python tools/optimization_loop/optimize.py --suggest
+
+# 2. Apply top priority, easiest transform
+
+# 3. Verify improvement
+python tools/optimization_loop/optimize.py
+```
+
+### Documentation
+- Full docs: `tools/optimization_loop/README.md`
+- Quick ref: `tools/optimization_loop/quickstart.md`
 
 ---
 

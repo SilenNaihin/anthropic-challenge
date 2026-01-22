@@ -155,16 +155,21 @@
     {
       "id": "transforms",
       "name": "Transformation Library",
-      "file": "transforms.py",
-      "status": "not_started",
+      "file": "transforms/transforms.py",
+      "status": "completed",
       "priority": "P2",
-      "description": "Codified transformations: unroll, vectorize, pipeline",
+      "description": "Codified transformations: unroll, vectorize, pipeline, hoist invariants",
       "features": {
-        "loop_unroll": false,
-        "vectorize_batch": false,
-        "software_pipeline": false,
-        "hoist_invariants": false
+        "loop_unroll": true,
+        "vectorize_batch": true,
+        "software_pipeline": true,
+        "hoist_invariants": true,
+        "rich_output": true,
+        "json_output": true,
+        "hash_helpers": true,
+        "analysis_tools": true
       },
+      "usage": "python tools/transforms/transforms.py [--demo] [--json]",
       "value": "Reduces manual errors in mechanical transforms"
     },
     {
@@ -190,16 +195,20 @@
     {
       "id": "optimization_loop",
       "name": "Optimization Loop Runner",
-      "file": "optimize.py",
-      "status": "not_started",
+      "file": "optimization_loop/optimize.py",
+      "status": "completed",
       "priority": "P3",
       "description": "Meta-tool that runs profile->analyze->transform->validate loop",
       "features": {
-        "automated_profiling": false,
-        "bottleneck_detection": false,
-        "transform_application": false,
-        "regression_checking": false
+        "automated_profiling": true,
+        "bottleneck_detection": true,
+        "transform_suggestions": true,
+        "regression_checking": true,
+        "rich_output": true,
+        "json_output": true,
+        "dry_run_mode": true
       },
+      "usage": "python tools/optimization_loop/optimize.py [--profile] [--suggest] [--validate] [--json] [--dry-run]",
       "value": "Automates the optimization search process"
     }
   ],
