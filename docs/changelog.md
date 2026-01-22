@@ -14,6 +14,28 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Restructure pipeline: skip extract, use v_taddr directly
+
+**Hypothesis**: Skipping the extract step (copying v_taddr to scalar addr) and using v_taddr directly for scattered loads should save ALU cycles and allow more scattered loads during hash.
+
+**Change**:
+1. Use v_taddr directly for scattered loads (skip addr_a, addr_b extract)
+2. Fit 14 of 16 scattered loads during hash cycles 5-11
+3. Move XOR to finish cycle 2 (all v_node ready after cycle 1)
+4. Only v_node_b[6:8] loads remain in finish cycle 1
+
+**Result**: 4,436 cycles (no change from 4,436)
+
+**Analysis**:
+- Finish is still 5 cycles due to VALU data dependencies, not loads
+- The loads were overlapped and don't affect cycle count
+- ALU was already free, so skipping extract doesn't save cycles
+- The restructuring is correct and cleaner, just doesn't improve performance
+
+**Verdict**: Keep - cleaner code structure, enables future overlap optimization.
+
+---
+
 ## [2025-01-22] - Replace vselect with multiply_add for bounds check
 
 **Hypothesis**: The bounds check `idx < n_nodes ? idx : 0` uses vselect (FLOW engine, 1 slot). We can replace it with `idx * (idx < n_nodes)` using multiply_add (VALU engine, 6 slots). This eliminates the 2 FLOW operations that forced sequential execution.

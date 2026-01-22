@@ -102,6 +102,6 @@ Attempted to move all 16 scattered loads into hash cycles 7-15 (9 cycles availab
 - Hypothesis: Timing issue at round boundaries or register dependency bug
 
 ### Remaining Optimization Opportunities
-1. **Triple-batch processing**: Use all 6 VALU slots during hash instead of 4. Would lose tree addr pipelining (uses 2 free VALU slots).
-2. **Loop overhead reduction**: ~18 cycles overhead per iteration unexplained.
-3. **Further LOAD engine utilization**: During hash cycles 7-15, LOAD is free but can't be used due to correctness issues.
+1. **Finish-hash overlap**: Move XOR to end of hash (cycle 11), then overlap finish VALU ops with next hash B cycles. Theory: 12 cycles/iteration instead of 17 = ~3,100 cycles.
+2. **Triple-batch processing**: Use all 6 VALU slots during hash instead of 4. Would lose tree addr pipelining.
+3. **Earlier addr computation**: Compute addr K+1 at end of hash K to enable vloads at start of hash K+1.
