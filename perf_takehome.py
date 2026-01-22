@@ -255,24 +255,24 @@ class KernelBuilder:
             """Emit finish cycles 1-2: index prep and XOR.
 
             These must happen before next hash starts.
-            Cycle 1: VALU (4 slots) + LOAD (2 slots for remaining v_node_b[6:8])
-            Cycle 2: VALU (2 slots for +) + VALU (2 slots for XOR)
+            All 16 scattered loads now fit in hash, so no loads needed here.
+            Cycle 1: VALU (4 slots) for index prep + VALU (2 slots) for XOR
+            Cycle 2: VALU (2 slots for +)
             """
-            # Cycle 1: index prep (VALU 4 slots) + remaining scattered loads
+            # Cycle 1: index prep (VALU 4 slots) + XOR for next batch (VALU 2 slots)
             instr1 = {"valu": [
                 ("&", r['v_htmp1_a'], r['v_val_a'], v_one), ("&", r['v_htmp1_b'], r['v_val_b'], v_one),
                 ("multiply_add", r['v_idx_a'], r['v_idx_a'], v_two, v_one),
                 ("multiply_add", r['v_idx_b'], r['v_idx_b'], v_two, v_one),
             ]}
             if has_next:
-                instr1["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['v_taddr_b'] + 6), ("load", r_nxt['v_node_b'] + 7, r_nxt['v_taddr_b'] + 7)]
+                # XOR now in cycle 1 since all 16 loads complete in hash cycle 11
+                instr1["valu"].extend([("^", r_nxt['v_val_a'], r_nxt['v_val_a'], r_nxt['v_node_a']), ("^", r_nxt['v_val_b'], r_nxt['v_val_b'], r_nxt['v_node_b'])])
             self.instrs.append(instr1)
 
-            # Cycle 2: + for index (VALU 2 slots) + XOR for next batch (VALU 2 slots)
-            instr2 = {"valu": [("+", r['v_idx_a'], r['v_idx_a'], r['v_htmp1_a']), ("+", r['v_idx_b'], r['v_idx_b'], r['v_htmp1_b'])]}
-            if has_next:
-                instr2["valu"].extend([("^", r_nxt['v_val_a'], r_nxt['v_val_a'], r_nxt['v_node_a']), ("^", r_nxt['v_val_b'], r_nxt['v_val_b'], r_nxt['v_node_b'])])
-            self.instrs.append(instr2)
+            # Cycle 2: + for index (VALU 2 slots)
+            self.instrs.append({"valu": [("+", r['v_idx_a'], r['v_idx_a'], r['v_htmp1_a']), ("+", r['v_idx_b'], r['v_idx_b'], r['v_htmp1_b'])]})
+
 
         def emit_finish_late(r):
             """Emit finish cycles 3-5: bounds check and stores.
@@ -302,13 +302,13 @@ class KernelBuilder:
         def emit_hash_with_full_prep(r_cur, r_nxt, off_a, off_b):
             """Emit hash while preparing next batch.
 
-            Skip extract step - use v_taddr directly for scattered loads.
-            Pipeline:
+            Optimized pipeline - move vloads earlier to fit all 16 scattered loads:
             - Cycle 0: addr computation (ALU)
-            - Cycles 2-3: vloads (LOAD)
-            - Cycle 4: tree addr (VALU - 2 slots)
-            - Cycles 5-11: scattered loads using v_taddr directly (14 loads)
-            - Remaining 2 loads done in finish
+            - Cycle 1: vload A (LOAD) - moved from cycle 2
+            - Cycle 2: vload B (LOAD) - moved from cycle 3
+            - Cycle 3: tree addr (VALU - 2 slots) - moved from cycle 4
+            - Cycles 4-11: ALL 16 scattered loads (8 cycles × 2 = 16 loads)
+            - No remaining loads needed in finish
             """
             const_a = self.scratch_const(off_a)
             const_b = self.scratch_const(off_b)
@@ -330,37 +330,40 @@ class KernelBuilder:
                 ]}
 
                 if cycle_num == 0:
-                    # Cycle 0: addr computation (ALU)
+                    # Cycle 0 (A): addr computation
                     instr_a["alu"] = [
                         ("+", r_nxt['idx_base_a'], self.scratch["inp_indices_p"], const_a),
                         ("+", r_nxt['val_base_a'], self.scratch["inp_values_p"], const_a),
                         ("+", r_nxt['idx_base_b'], self.scratch["inp_indices_p"], const_b),
                         ("+", r_nxt['val_base_b'], self.scratch["inp_values_p"], const_b),
                     ]
+                    # Cycle 1 (B): vload A - idx_base_a/val_base_a ready after cycle 0
+                    instr_b["load"] = [("vload", r_nxt['v_idx_a'], r_nxt['idx_base_a']), ("vload", r_nxt['v_val_a'], r_nxt['val_base_a'])]
                 elif cycle_num == 2:
-                    # Cycles 2-3: vloads (LOAD)
-                    instr_a["load"] = [("vload", r_nxt['v_idx_a'], r_nxt['idx_base_a']), ("vload", r_nxt['v_val_a'], r_nxt['val_base_a'])]
-                    instr_b["load"] = [("vload", r_nxt['v_idx_b'], r_nxt['idx_base_b']), ("vload", r_nxt['v_val_b'], r_nxt['val_base_b'])]
-                elif cycle_num == 4:
-                    # Cycle 4: tree addr (VALU - 2 slots)
-                    instr_a["valu"].extend([
+                    # Cycle 2 (A): vload B - idx_base_b/val_base_b ready after cycle 0
+                    instr_a["load"] = [("vload", r_nxt['v_idx_b'], r_nxt['idx_base_b']), ("vload", r_nxt['v_val_b'], r_nxt['val_base_b'])]
+                    # Cycle 3 (B): tree addr - v_idx_a ready after cycle 1, v_idx_b ready after cycle 2
+                    instr_b["valu"].extend([
                         ("+", r_nxt['v_taddr_a'], v_forest_p, r_nxt['v_idx_a']),
                         ("+", r_nxt['v_taddr_b'], v_forest_p, r_nxt['v_idx_b']),
                     ])
-                    # Cycle 5: first scattered loads using v_taddr directly (skip extract)
-                    instr_b["load"] = [("load", r_nxt['v_node_a'], r_nxt['v_taddr_a']), ("load", r_nxt['v_node_a'] + 1, r_nxt['v_taddr_a'] + 1)]
+                elif cycle_num == 4:
+                    # Cycle 4 (A): scattered loads 0-1 - v_taddr ready after cycle 3
+                    instr_a["load"] = [("load", r_nxt['v_node_a'], r_nxt['v_taddr_a']), ("load", r_nxt['v_node_a'] + 1, r_nxt['v_taddr_a'] + 1)]
+                    # Cycle 5 (B): scattered loads 2-3
+                    instr_b["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['v_taddr_a'] + 2), ("load", r_nxt['v_node_a'] + 3, r_nxt['v_taddr_a'] + 3)]
                 elif cycle_num == 6:
-                    # Cycles 6-7: v_node_a[2:6]
-                    instr_a["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['v_taddr_a'] + 2), ("load", r_nxt['v_node_a'] + 3, r_nxt['v_taddr_a'] + 3)]
-                    instr_b["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['v_taddr_a'] + 4), ("load", r_nxt['v_node_a'] + 5, r_nxt['v_taddr_a'] + 5)]
+                    # Cycle 6-7: scattered loads 4-7
+                    instr_a["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['v_taddr_a'] + 4), ("load", r_nxt['v_node_a'] + 5, r_nxt['v_taddr_a'] + 5)]
+                    instr_b["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['v_taddr_a'] + 6), ("load", r_nxt['v_node_a'] + 7, r_nxt['v_taddr_a'] + 7)]
                 elif cycle_num == 8:
-                    # Cycles 8-9: v_node_a[6:8] + v_node_b[0:2]
-                    instr_a["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['v_taddr_a'] + 6), ("load", r_nxt['v_node_a'] + 7, r_nxt['v_taddr_a'] + 7)]
-                    instr_b["load"] = [("load", r_nxt['v_node_b'], r_nxt['v_taddr_b']), ("load", r_nxt['v_node_b'] + 1, r_nxt['v_taddr_b'] + 1)]
+                    # Cycle 8-9: scattered loads 8-11
+                    instr_a["load"] = [("load", r_nxt['v_node_b'], r_nxt['v_taddr_b']), ("load", r_nxt['v_node_b'] + 1, r_nxt['v_taddr_b'] + 1)]
+                    instr_b["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['v_taddr_b'] + 2), ("load", r_nxt['v_node_b'] + 3, r_nxt['v_taddr_b'] + 3)]
                 elif cycle_num == 10:
-                    # Cycles 10-11: v_node_b[2:6] (remaining v_node_b[6:8] loaded in finish)
-                    instr_a["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['v_taddr_b'] + 2), ("load", r_nxt['v_node_b'] + 3, r_nxt['v_taddr_b'] + 3)]
-                    instr_b["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['v_taddr_b'] + 4), ("load", r_nxt['v_node_b'] + 5, r_nxt['v_taddr_b'] + 5)]
+                    # Cycle 10-11: scattered loads 12-15 (all 16 now fit!)
+                    instr_a["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['v_taddr_b'] + 4), ("load", r_nxt['v_node_b'] + 5, r_nxt['v_taddr_b'] + 5)]
+                    instr_b["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['v_taddr_b'] + 6), ("load", r_nxt['v_node_b'] + 7, r_nxt['v_taddr_b'] + 7)]
 
                 self.instrs.append(instr_a)
                 self.instrs.append(instr_b)
@@ -368,11 +371,15 @@ class KernelBuilder:
         def emit_hash_with_finish_overlap(r_cur, r_nxt, r_prev, off_a, off_b, do_prep, do_finish_late):
             """Hash current batch with overlapped prep and finish_late.
 
-            Schedule:
-            - Cycles 0-6: hash + prep (same as emit_hash_with_full_prep)
-            - Cycle 7 (B): hash + scattered loads + finish_late < for prev
-            - Cycle 9 (B): hash + scattered loads + finish_late multiply_add + vstore for prev
-            - Cycle 11 (B): hash + scattered loads + finish_late vstore for prev
+            Optimized schedule with earlier vloads (all 16 scattered loads fit in hash):
+            - Cycle 0 (A): addr comp
+            - Cycle 1 (B): vload A
+            - Cycle 2 (A): vload B
+            - Cycle 3 (B): tree addr
+            - Cycles 4-11: 16 scattered loads
+            - Cycle 7 (B): + finish_late < for prev
+            - Cycle 9 (B): + finish_late multiply_add + vstore for prev
+            - Cycle 11 (B): + finish_late vstore for prev
             """
             const_a = self.scratch_const(off_a) if do_prep else None
             const_b = self.scratch_const(off_b) if do_prep else None
@@ -393,33 +400,43 @@ class KernelBuilder:
                     (op2, r_cur['v_val_b'], r_cur['v_htmp1_b'], r_cur['v_htmp2_b']),
                 ]}
 
-                # Prep operations (same schedule as emit_hash_with_full_prep)
+                # Prep operations with earlier vloads schedule
                 if do_prep:
                     if cycle_num == 0:
+                        # Cycle 0 (A): addr comp
                         instr_a["alu"] = [
                             ("+", r_nxt['idx_base_a'], self.scratch["inp_indices_p"], const_a),
                             ("+", r_nxt['val_base_a'], self.scratch["inp_values_p"], const_a),
                             ("+", r_nxt['idx_base_b'], self.scratch["inp_indices_p"], const_b),
                             ("+", r_nxt['val_base_b'], self.scratch["inp_values_p"], const_b),
                         ]
+                        # Cycle 1 (B): vload A
+                        instr_b["load"] = [("vload", r_nxt['v_idx_a'], r_nxt['idx_base_a']), ("vload", r_nxt['v_val_a'], r_nxt['val_base_a'])]
                     elif cycle_num == 2:
-                        instr_a["load"] = [("vload", r_nxt['v_idx_a'], r_nxt['idx_base_a']), ("vload", r_nxt['v_val_a'], r_nxt['val_base_a'])]
-                        instr_b["load"] = [("vload", r_nxt['v_idx_b'], r_nxt['idx_base_b']), ("vload", r_nxt['v_val_b'], r_nxt['val_base_b'])]
-                    elif cycle_num == 4:
-                        instr_a["valu"].extend([
+                        # Cycle 2 (A): vload B
+                        instr_a["load"] = [("vload", r_nxt['v_idx_b'], r_nxt['idx_base_b']), ("vload", r_nxt['v_val_b'], r_nxt['val_base_b'])]
+                        # Cycle 3 (B): tree addr
+                        instr_b["valu"].extend([
                             ("+", r_nxt['v_taddr_a'], v_forest_p, r_nxt['v_idx_a']),
                             ("+", r_nxt['v_taddr_b'], v_forest_p, r_nxt['v_idx_b']),
                         ])
-                        instr_b["load"] = [("load", r_nxt['v_node_a'], r_nxt['v_taddr_a']), ("load", r_nxt['v_node_a'] + 1, r_nxt['v_taddr_a'] + 1)]
+                    elif cycle_num == 4:
+                        # Cycle 4 (A): scattered loads 0-1
+                        instr_a["load"] = [("load", r_nxt['v_node_a'], r_nxt['v_taddr_a']), ("load", r_nxt['v_node_a'] + 1, r_nxt['v_taddr_a'] + 1)]
+                        # Cycle 5 (B): scattered loads 2-3
+                        instr_b["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['v_taddr_a'] + 2), ("load", r_nxt['v_node_a'] + 3, r_nxt['v_taddr_a'] + 3)]
                     elif cycle_num == 6:
-                        instr_a["load"] = [("load", r_nxt['v_node_a'] + 2, r_nxt['v_taddr_a'] + 2), ("load", r_nxt['v_node_a'] + 3, r_nxt['v_taddr_a'] + 3)]
-                        instr_b["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['v_taddr_a'] + 4), ("load", r_nxt['v_node_a'] + 5, r_nxt['v_taddr_a'] + 5)]
+                        # Cycle 6-7: scattered loads 4-7
+                        instr_a["load"] = [("load", r_nxt['v_node_a'] + 4, r_nxt['v_taddr_a'] + 4), ("load", r_nxt['v_node_a'] + 5, r_nxt['v_taddr_a'] + 5)]
+                        instr_b["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['v_taddr_a'] + 6), ("load", r_nxt['v_node_a'] + 7, r_nxt['v_taddr_a'] + 7)]
                     elif cycle_num == 8:
-                        instr_a["load"] = [("load", r_nxt['v_node_a'] + 6, r_nxt['v_taddr_a'] + 6), ("load", r_nxt['v_node_a'] + 7, r_nxt['v_taddr_a'] + 7)]
-                        instr_b["load"] = [("load", r_nxt['v_node_b'], r_nxt['v_taddr_b']), ("load", r_nxt['v_node_b'] + 1, r_nxt['v_taddr_b'] + 1)]
+                        # Cycle 8-9: scattered loads 8-11
+                        instr_a["load"] = [("load", r_nxt['v_node_b'], r_nxt['v_taddr_b']), ("load", r_nxt['v_node_b'] + 1, r_nxt['v_taddr_b'] + 1)]
+                        instr_b["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['v_taddr_b'] + 2), ("load", r_nxt['v_node_b'] + 3, r_nxt['v_taddr_b'] + 3)]
                     elif cycle_num == 10:
-                        instr_a["load"] = [("load", r_nxt['v_node_b'] + 2, r_nxt['v_taddr_b'] + 2), ("load", r_nxt['v_node_b'] + 3, r_nxt['v_taddr_b'] + 3)]
-                        instr_b["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['v_taddr_b'] + 4), ("load", r_nxt['v_node_b'] + 5, r_nxt['v_taddr_b'] + 5)]
+                        # Cycle 10-11: scattered loads 12-15
+                        instr_a["load"] = [("load", r_nxt['v_node_b'] + 4, r_nxt['v_taddr_b'] + 4), ("load", r_nxt['v_node_b'] + 5, r_nxt['v_taddr_b'] + 5)]
+                        instr_b["load"] = [("load", r_nxt['v_node_b'] + 6, r_nxt['v_taddr_b'] + 6), ("load", r_nxt['v_node_b'] + 7, r_nxt['v_taddr_b'] + 7)]
 
                 # finish_late operations overlapped in hash B cycles
                 if do_finish_late:

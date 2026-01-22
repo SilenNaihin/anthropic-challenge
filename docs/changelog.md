@@ -14,6 +14,29 @@ Track every code change with the hypothesis behind it and the measured result.
 
 ---
 
+## [2025-01-22] - Earlier vloads schedule (all 16 scattered loads in hash)
+
+**Hypothesis**: Moving vloads to cycles 1-2 (from 2-3) and tree addr to cycle 3 (from 4) would allow all 16 scattered loads to fit in hash cycles 4-11, eliminating the remaining loads from finish_early.
+
+**Change**:
+1. Moved vload A to hash cycle 1 (B), vload B to cycle 2 (A)
+2. Moved tree addr to hash cycle 3 (B)
+3. Scattered loads now span cycles 4-11 (8 cycles × 2 = 16 loads)
+4. Moved XOR from finish_early cycle 2 to cycle 1 (since v_node is fully loaded)
+
+**Result**: 3,674 → 3,674 cycles (no change)
+
+**Analysis**:
+- The optimization removes LOAD operations from finish_early but doesn't reduce cycles
+- finish_early is still 2 cycles due to VALU data dependencies: `& → +`
+- Cycle 1: & + multiply_add + XOR (6 VALU)
+- Cycle 2: + (2 VALU, depends on & output)
+- Moving loads earlier just frees LOAD slots, which don't affect cycle count
+
+**Verdict**: Keep - cleaner structure with all loads in hash, even if no cycle savings.
+
+---
+
 ## [2025-01-22] - Implement finish-hash overlap with 3-way register rotation
 
 **Hypothesis**: finish_late (cycles 3-5: bounds check and stores) can be overlapped with the next hash's B cycles, which have 4 free VALU slots and free STORE slots. This requires 3 register sets to avoid conflicts between prep and previous finish_late.
