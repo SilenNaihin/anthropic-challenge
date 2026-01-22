@@ -34,8 +34,8 @@ from typing import Dict, List, Set, Tuple, Optional, Any
 from collections import defaultdict
 from enum import Enum
 
-# Add parent dir to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path for imports (two levels up from tools/dependency_graph/)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from problem import SLOT_LIMITS, VLEN
 
